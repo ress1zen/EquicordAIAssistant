@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build outputs and temporary bundles
+dist/
+build/
+out/
+*.zip
+*.asar
+
+# Local environment and secrets
+.env
+.env.*
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local Discord/Dorion state
+plugins.json
