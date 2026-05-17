@@ -1255,8 +1255,61 @@ function startFloatingAssistant() {
         tooltip.style.top = `${top}px`;
     };
 
-    shadow.querySelector(".fab")?.addEventListener("click", () => panel.classList.toggle("open"));
-    shadow.querySelector(".close")?.addEventListener("click", () => panel.classList.remove("open"));
+    const stopDiscordEvent = (event: Event) => {
+        event.stopPropagation();
+    };
+    const openPanel = () => {
+        panel.classList.add("open");
+        window.setTimeout(() => prompt.focus(), 0);
+    };
+    const closePanel = () => {
+        panel.classList.remove("open");
+        hideTooltip();
+    };
+
+    [
+        "keydown",
+        "keyup",
+        "keypress",
+        "beforeinput",
+        "input",
+        "compositionstart",
+        "compositionupdate",
+        "compositionend",
+        "paste",
+        "copy",
+        "cut",
+        "focusin",
+        "focusout",
+    ].forEach(eventName => shadow.addEventListener(eventName, stopDiscordEvent));
+    [
+        "pointerdown",
+        "pointerup",
+        "mousedown",
+        "mouseup",
+        "click",
+        "dblclick",
+        "contextmenu",
+        "wheel",
+    ].forEach(eventName => panel.addEventListener(eventName, stopDiscordEvent));
+    shadow.querySelectorAll("input, textarea, select").forEach(control => {
+        control.addEventListener("pointerdown", stopDiscordEvent);
+        control.addEventListener("mousedown", stopDiscordEvent);
+        control.addEventListener("click", event => {
+            event.stopPropagation();
+            (event.currentTarget as HTMLElement).focus();
+        });
+    });
+
+    shadow.querySelector(".fab")?.addEventListener("click", event => {
+        event.stopPropagation();
+        if (panel.classList.contains("open")) closePanel();
+        else openPanel();
+    });
+    shadow.querySelector(".close")?.addEventListener("click", event => {
+        event.stopPropagation();
+        closePanel();
+    });
     shadow.querySelector(".api-key-eye")?.addEventListener("click", () => {
         const input = shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement;
         input.type = input.type === "password" ? "text" : "password";
