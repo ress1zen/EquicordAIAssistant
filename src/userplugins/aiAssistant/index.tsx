@@ -239,9 +239,21 @@ const settings = definePluginSettings({
     },
 });
 
+type ApiContentPart =
+    | { type: "text"; text: string; }
+    | { type: "image_url"; image_url: { url: string; }; };
+
 type ApiMessage = {
     role: "system" | "user" | "assistant";
-    content: string;
+    content: string | ApiContentPart[];
+};
+
+type FloatingAttachment = {
+    name: string;
+    type: string;
+    size: number;
+    text?: string;
+    dataUrl?: string;
 };
 
 type ChatCompletionResponse = {
@@ -404,7 +416,41 @@ function getRecentContext(channelId: string): ApiMessage[] {
         .filter(Boolean) as ApiMessage[];
 }
 
-async function requestAssistant(prompt: string, channelId: string) {
+function buildUserContent(prompt: string, attachments: FloatingAttachment[] = []): string | ApiContentPart[] {
+    if (!attachments.length) return withLanguageReminder(prompt);
+
+    const textParts = [withLanguageReminder(prompt)];
+    const content: ApiContentPart[] = [];
+
+    for (const attachment of attachments) {
+        if (attachment.dataUrl?.startsWith("data:image/")) {
+            content.push({
+                type: "image_url",
+                image_url: {
+                    url: attachment.dataUrl,
+                },
+            });
+            textParts.push(`Image attachment: ${attachment.name} (${attachment.type || "image"}, ${attachment.size} bytes).`);
+            continue;
+        }
+
+        if (attachment.text) {
+            textParts.push(`File attachment: ${attachment.name} (${attachment.type || "text"}, ${attachment.size} bytes)\n${attachment.text}`);
+        } else {
+            textParts.push(`File attachment: ${attachment.name} (${attachment.type || "unknown"}, ${attachment.size} bytes).`);
+        }
+    }
+
+    return [
+        {
+            type: "text",
+            text: textParts.join("\n\n"),
+        },
+        ...content,
+    ];
+}
+
+async function requestAssistant(prompt: string, channelId: string, attachments: FloatingAttachment[] = []) {
     const apiKey = settings.store.apiKey.trim();
     const model = getModel();
     const endpoint = getEndpoint();
@@ -423,7 +469,7 @@ async function requestAssistant(prompt: string, channelId: string) {
         ...getRecentContext(channelId),
         {
             role: "user",
-            content: withLanguageReminder(prompt),
+            content: buildUserContent(prompt, attachments),
         },
     ];
 
@@ -582,9 +628,19 @@ function t(key: string) {
         provider: "Провайдер",
         model: "Модель",
         apiKey: "API-ключ",
+        customEndpoint: "Свой endpoint",
+        customModel: "Своя model ID",
+        generation: "Генерация",
+        systemPrompt: "Системный промпт",
+        temperature: "Температура",
+        contextMessages: "Сообщений контекста",
+        maxTokens: "Макс. токенов",
+        memory: "Память",
+        memoryEnabledText: "Запоминать предыдущие запросы",
         prompt: "Запрос",
         ask: "Спросить",
         insert: "Вставить",
+        reply: "Ответом",
         copy: "Копировать",
         clear: "Очистить",
         answer: "Ответ",
@@ -597,8 +653,35 @@ function t(key: string) {
         noResponse: "Ответ не получен. Проверь настройки плагина, выбранную модель, API-ключ, endpoint провайдера или ошибки в консоли.",
         copied: "Скопировано.",
         inserted: "Вставлено в поле ввода.",
+        attached: "Файлов прикреплено: {count}.",
+        attachmentRemoved: "Вложение удалено.",
+        attachFiles: "Прикрепить файлы",
+        attachmentsHint: "Прикрепи, перетащи или вставь фото/файлы сюда.",
+        hotkey: "Горячая клавиша: Ctrl+Shift+Y. Выделенный текст подставится в запрос.",
+        website: "Сайт",
+        sourceCode: "Исходный код",
+        authors: "Авторы",
         open: "Открыть AI-ассистента",
         close: "Закрыть",
+        showApiKey: "Показать API-ключ",
+        hideApiKey: "Скрыть API-ключ",
+        apiKeyPlaceholder: "Вставь API-ключ",
+        endpointPlaceholder: "https://example.com/v1/chat/completions",
+        customModelPlaceholder: "openrouter/auto",
+        promptPlaceholder: "Спроси что угодно...",
+        systemPromptPlaceholder: "Поведение ассистента и стиль ответа",
+        infoLanguage: "Меняет язык меню ассистента и язык, на котором ИИ должен отвечать.",
+        infoProvider: "Выбирает API-сервис, куда будут отправляться запросы.",
+        infoModel: "Выбирает конкретную модель. Для фото нужна модель с поддержкой vision.",
+        infoApiKey: "API-ключ выбранного провайдера. Хранится локально в этом клиенте.",
+        infoCustomEndpoint: "OpenAI-compatible URL chat completions для своего провайдера.",
+        infoCustomModel: "Своё имя или ID модели, которое отправляется в endpoint.",
+        infoSystemPrompt: "Базовая инструкция, которая задаёт поведение и тон ассистента.",
+        infoTemperature: "Отвечает за случайность. Ниже — строже, выше — креативнее.",
+        infoContextMessages: "Сколько последних сообщений Discord брать как контекст.",
+        infoMaxTokens: "Максимальная длина ответа. Больше значение — длиннее ответ.",
+        infoMemory: "Хранит последние запросы и ответы локально, затем использует их как контекст.",
+        infoPrompt: "Твой вопрос, команда или инструкция для ассистента.",
     };
 
     const en: Record<string, string> = {
@@ -608,9 +691,19 @@ function t(key: string) {
         provider: "Provider",
         model: "Model",
         apiKey: "API key",
+        customEndpoint: "Custom endpoint",
+        customModel: "Custom model ID",
+        generation: "Generation",
+        systemPrompt: "System prompt",
+        temperature: "Temperature",
+        contextMessages: "Context messages",
+        maxTokens: "Max tokens",
+        memory: "Memory",
+        memoryEnabledText: "Remember previous assistant requests",
         prompt: "Prompt",
         ask: "Ask",
         insert: "Insert",
+        reply: "Reply",
         copy: "Copy",
         clear: "Clear",
         answer: "Answer",
@@ -623,8 +716,35 @@ function t(key: string) {
         noResponse: "No response. Check the plugin settings, selected model, API key, provider endpoint, or console errors.",
         copied: "Copied.",
         inserted: "Inserted into chat box.",
+        attached: "{count} file(s) attached.",
+        attachmentRemoved: "Attachment removed.",
+        attachFiles: "Attach files",
+        attachmentsHint: "Attach, drag, or paste images/files here.",
+        hotkey: "Hotkey: Ctrl+Shift+Y. Select text before opening to use it as a prompt.",
+        website: "Website",
+        sourceCode: "Source Code",
+        authors: "Authors",
         open: "Open AI Assistant",
         close: "Close",
+        showApiKey: "Show API key",
+        hideApiKey: "Hide API key",
+        apiKeyPlaceholder: "Paste your API key",
+        endpointPlaceholder: "https://example.com/v1/chat/completions",
+        customModelPlaceholder: "openrouter/auto",
+        promptPlaceholder: "Ask anything...",
+        systemPromptPlaceholder: "Assistant behavior and response style",
+        infoLanguage: "Changes the assistant UI language and the language the AI should answer in.",
+        infoProvider: "Selects which API service will receive requests.",
+        infoModel: "Selects the exact model. Use a vision-capable model if you attach images.",
+        infoApiKey: "Your provider API key. It is stored locally in this client.",
+        infoCustomEndpoint: "OpenAI-compatible chat completions URL for a custom provider.",
+        infoCustomModel: "Custom model name or ID sent to the selected endpoint.",
+        infoSystemPrompt: "Base instruction that defines the assistant's behavior and tone.",
+        infoTemperature: "Controls randomness. Lower is stricter, higher is more creative.",
+        infoContextMessages: "How many recent Discord messages are used as context.",
+        infoMaxTokens: "Maximum response length. Higher values allow longer answers.",
+        infoMemory: "Stores recent prompts and answers locally, then uses them as context for future requests.",
+        infoPrompt: "Your question, command, or instruction for the assistant.",
     };
 
     return (currentLocale() === Locales.English ? en : ru)[key] ?? en[key] ?? key;
@@ -635,13 +755,32 @@ function syncFloatingForm(shadow: ShadowRoot) {
     (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value = settings.store.provider;
     (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value = settings.store.modelPreset;
     (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).value = settings.store.apiKey;
+    (shadow.querySelector("[data-setting='customEndpoint']") as HTMLInputElement).value = settings.store.customEndpoint;
+    (shadow.querySelector("[data-setting='customModel']") as HTMLInputElement).value = settings.store.customModel;
+    (shadow.querySelector("[data-setting='systemPrompt']") as HTMLTextAreaElement).value = settings.store.systemPrompt;
+    (shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value = String(settings.store.temperature);
+    (shadow.querySelector("[data-setting='contextMessages']") as HTMLInputElement).value = String(settings.store.contextMessages);
+    (shadow.querySelector("[data-setting='maxTokens']") as HTMLInputElement).value = String(settings.store.maxTokens);
+    (shadow.querySelector("[data-setting='memoryEnabled']") as HTMLInputElement).checked = Boolean(settings.store.memoryEnabled);
     shadow.querySelectorAll("[data-i18n]").forEach(node => {
         node.textContent = t((node as HTMLElement).dataset.i18n || "");
     });
+    shadow.querySelectorAll("[data-info-i18n]").forEach(node => {
+        (node as HTMLElement).title = t((node as HTMLElement).dataset.infoI18n || "");
+    });
+    shadow.querySelectorAll("[data-placeholder]").forEach(node => {
+        (node as HTMLInputElement | HTMLTextAreaElement).placeholder = t((node as HTMLElement).dataset.placeholder || "");
+    });
+    (shadow.querySelector(".custom-endpoint") as HTMLElement).style.display = settings.store.provider === Providers.Custom ? "block" : "none";
+    (shadow.querySelector(".custom-model") as HTMLElement).style.display = settings.store.modelPreset === CustomModel ? "block" : "none";
     const fab = shadow.querySelector(".fab") as HTMLButtonElement;
     const close = shadow.querySelector(".close") as HTMLButtonElement;
+    const eye = shadow.querySelector(".api-key-eye") as HTMLButtonElement;
     fab.title = t("open");
     close.title = t("close");
+    eye.title = (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).type === "password"
+        ? t("showApiKey")
+        : t("hideApiKey");
 }
 
 function writeFloatingSettings(shadow: ShadowRoot) {
@@ -649,12 +788,96 @@ function writeFloatingSettings(shadow: ShadowRoot) {
     settings.store.provider = (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value;
     settings.store.modelPreset = (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value;
     settings.store.apiKey = (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).value;
+    settings.store.customEndpoint = (shadow.querySelector("[data-setting='customEndpoint']") as HTMLInputElement).value;
+    settings.store.customModel = (shadow.querySelector("[data-setting='customModel']") as HTMLInputElement).value;
+    settings.store.systemPrompt = (shadow.querySelector("[data-setting='systemPrompt']") as HTMLTextAreaElement).value;
+    settings.store.temperature = Number((shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value) || 0.7;
+    settings.store.contextMessages = Number((shadow.querySelector("[data-setting='contextMessages']") as HTMLInputElement).value) || 0;
+    settings.store.maxTokens = Number((shadow.querySelector("[data-setting='maxTokens']") as HTMLInputElement).value) || 900;
+    settings.store.memoryEnabled = (shadow.querySelector("[data-setting='memoryEnabled']") as HTMLInputElement).checked;
     syncFloatingForm(shadow);
 }
 
 function renderFloatingAnswer(answer: HTMLElement, text: string) {
     answer.textContent = text;
     answer.parentElement?.classList.toggle("visible", Boolean(text.trim()));
+}
+
+function formatBytes(size: number) {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function readFileAsText(file: File) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error);
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.readAsText(file);
+    });
+}
+
+function readFileAsDataUrl(file: File) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error);
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function fileToAttachment(file: File): Promise<FloatingAttachment> {
+    const attachment: FloatingAttachment = {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+    };
+
+    if (file.type.startsWith("image/")) {
+        attachment.dataUrl = await readFileAsDataUrl(file);
+        return attachment;
+    }
+
+    if (file.type.startsWith("text/") || /\.(txt|md|json|csv|ts|tsx|js|jsx|css|html|xml|yaml|yml|log)$/i.test(file.name)) {
+        attachment.text = (await readFileAsText(file)).slice(0, 12000);
+    }
+
+    return attachment;
+}
+
+function renderAttachments(list: HTMLElement, attachments: FloatingAttachment[], onRemove: (index: number) => void) {
+    list.innerHTML = "";
+    list.classList.toggle("visible", attachments.length > 0);
+
+    attachments.forEach((attachment, index) => {
+        const item = document.createElement("div");
+        item.className = "attachment-item";
+
+        const kind = document.createElement("div");
+        kind.className = "attachment-kind";
+        kind.textContent = attachment.type.startsWith("image/") ? "img" : "file";
+
+        const meta = document.createElement("div");
+        meta.className = "attachment-meta";
+
+        const name = document.createElement("div");
+        name.className = "attachment-name";
+        name.textContent = attachment.name;
+
+        const size = document.createElement("div");
+        size.className = "attachment-size";
+        size.textContent = formatBytes(attachment.size);
+
+        const remove = document.createElement("button");
+        remove.className = "attachment-remove";
+        remove.type = "button";
+        remove.addEventListener("click", () => onRemove(index));
+
+        meta.append(name, size);
+        item.append(kind, meta, remove);
+        list.append(item);
+    });
 }
 
 function startFloatingAssistant() {
@@ -729,29 +952,97 @@ function startFloatingAssistant() {
         .title { color: var(--text-strong); font-size: 20px; line-height: 24px; font-weight: 700; }
         .subtitle { margin-top: 2px; color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 400; }
         .close {
-          width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent;
-          color: var(--interactive); cursor: pointer; font-size: 18px; line-height: 1;
+          flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center;
+          border: 0; border-radius: 4px; background: transparent; color: var(--interactive);
+          cursor: pointer; font-size: 0; line-height: 1;
         }
         .close:hover { color: var(--interactive-hover); background: rgba(255,255,255,.06); }
-        .body { overflow: auto; min-height: 0; }
-        .group { padding: 16px 20px 0; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .close::before {
+          content: ""; width: 18px; height: 18px; background: currentColor;
+          -webkit-mask: url("data:image/svg+xml,%3Csvg width='18' height='18' viewBox='0 0 18 18' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.5 4.5l-9 9M4.5 4.5l9 9' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg width='18' height='18' viewBox='0 0 18 18' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.5 4.5l-9 9M4.5 4.5l9 9' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+        }
+        .body {
+          flex: 1 1 auto; overflow: auto; min-height: 0; padding: 0;
+          scrollbar-width: thin; scrollbar-color: var(--scrollbar-auto-thumb, #1a1b1e) transparent;
+        }
+        .body::-webkit-scrollbar, .answer::-webkit-scrollbar { width: 8px; height: 8px; }
+        .body::-webkit-scrollbar-thumb, .answer::-webkit-scrollbar-thumb {
+          border: 2px solid var(--panel); border-radius: 999px; background: var(--scrollbar-auto-thumb, #1a1b1e);
+        }
+        .group { padding: 16px 20px; border-bottom: 1px solid var(--border); background: transparent; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .full { grid-column: 1 / -1; }
         .control { min-width: 0; }
-        label {
+        label, .group-title {
           display: block; color: var(--muted); font-size: 12px; line-height: 16px;
-          font-weight: 700; margin-bottom: 6px; text-transform: uppercase;
+          font-weight: 700; text-transform: uppercase;
+        }
+        .group-title { margin-bottom: 12px; color: var(--text-strong); font-size: 16px; line-height: 20px; text-transform: none; }
+        label { margin: 0 0 6px; }
+        .label-with-info { display: flex; align-items: center; gap: 6px; min-height: 16px; margin: 0 0 6px; }
+        .label-with-info label { margin: 0; }
+        .info-button {
+          display: inline-grid; place-items: center; flex: 0 0 auto; width: 16px; height: 16px;
+          border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+          cursor: help; font: inherit; font-size: 0; padding: 0;
+        }
+        .info-button::before {
+          content: ""; display: block; width: 16px; height: 16px; background: currentColor;
+          -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zm0 1.334a5.333 5.333 0 110 10.666A5.333 5.333 0 018 2.667zm-.667 2.666h1.334v4H7.333v-4zm0 5.334h1.334V12H7.333v-1.333z'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zm0 1.334a5.333 5.333 0 110 10.666A5.333 5.333 0 018 2.667zm-.667 2.666h1.334v4H7.333v-4zm0 5.334h1.334V12H7.333v-1.333z'/%3E%3C/svg%3E") center / contain no-repeat;
         }
         input, select, textarea {
           width: 100%; border: 1px solid transparent; border-radius: 4px; background: var(--field);
-          color: var(--text); padding: 10px 14px; font-size: 14px; line-height: 20px; outline: none;
+          color: var(--text); padding: 10px 12px; font: inherit; font-size: 14px; line-height: 20px; outline: none;
+          transition: border-color .14s ease, background .14s ease;
         }
         input:hover, select:hover, textarea:hover { background: var(--field-hover); }
         input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-        textarea { min-height: 108px; resize: vertical; }
-        .prompt-area { padding: 16px 20px 0; }
+        textarea { min-height: 92px; resize: vertical; }
+        select {
+          min-height: 42px; padding-right: 42px; cursor: pointer; appearance: none; -webkit-appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M6 9l6 6 6-6' stroke='%23b8bed8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat; background-position: right 14px center; background-size: 16px 16px;
+        }
+        .api-key-shell { position: relative; }
+        .api-key-shell input { padding-right: 42px; }
+        .api-key-eye {
+          position: absolute; right: 4px; top: 50%; width: 32px; height: 32px; display: grid; place-items: center;
+          border: 0; border-radius: 4px; background: transparent; color: var(--muted); padding: 0; transform: translateY(-50%); cursor: pointer;
+        }
+        .api-key-eye:hover { background: rgba(255,255,255,.06); color: var(--text); }
+        .api-key-eye-icon {
+          width: 18px; height: 18px; background: currentColor;
+          -webkit-mask: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.1 12S5.7 5.8 12 5.8 21.9 12 21.9 12 18.3 18.2 12 18.2 2.1 12 2.1 12zM12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.1 12S5.7 5.8 12 5.8 21.9 12 21.9 12 18.3 18.2 12 18.2 2.1 12 2.1 12zM12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+        }
+        .switch-row { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; width: 100%; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600; }
+        .switch-row input { appearance: none; flex: 0 0 auto; width: 40px; height: 24px; border: 0; border-radius: 999px; background: var(--background-modifier-accent, #4e5058); cursor: pointer; padding: 0; position: relative; }
+        .switch-row input::before { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .14s ease; }
+        .switch-row input:checked { background: var(--accent); }
+        .switch-row input:checked::before { transform: translateX(16px); }
+        .prompt-area { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+        .prompt-area textarea { min-height: 118px; }
+        .attachments-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+        .attach-button {
+          min-height: 32px; border: 1px solid rgba(88,101,242,.5); border-radius: 3px;
+          background: rgba(88,101,242,.18); color: #e1e6ff; padding: 6px 10px;
+          cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+        }
+        .attachments-hint { min-width: 0; color: var(--muted); font-size: 12px; line-height: 16px; }
+        .file-input { display: none; }
+        .attachments-list { display: none; margin-top: 10px; gap: 8px; flex-direction: column; }
+        .attachments-list.visible { display: flex; }
+        .attachment-item { display: flex; align-items: center; gap: 8px; min-height: 34px; border-radius: 4px; background: var(--field); padding: 6px 8px; }
+        .attachment-kind { display: grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+        .attachment-meta { min-width: 0; flex: 1; }
+        .attachment-name { overflow: hidden; color: var(--text); font-size: 13px; line-height: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+        .attachment-size { color: var(--muted); font-size: 11px; line-height: 14px; }
+        .attachment-remove { display: grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: var(--interactive); cursor: pointer; font-size: 0; }
+        .attachment-remove::before { content: "x"; font-size: 14px; line-height: 1; }
         .actions {
-          display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+          display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px;
           padding: 16px 20px 10px; background: var(--panel-elevated);
         }
         button.action {
@@ -765,19 +1056,34 @@ function startFloatingAssistant() {
         button.action:active { transform: translateY(1px); }
         button.action.ask { background: linear-gradient(180deg, #6d7cff 0%, var(--accent) 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 8px 18px rgba(88,101,242,.2); }
         button.action.insert { border-color: rgba(88,101,242,.5); background: rgba(88,101,242,.18); color: #e1e6ff; }
+        button.action.reply { border-color: rgba(35,165,90,.5); background: rgba(35,165,90,.18); color: #d8f7e6; }
         button.action.copy { border-color: rgba(52,152,219,.5); background: rgba(52,152,219,.18); color: #d7edff; }
         button.action.clear { border-color: rgba(218,55,60,.5); background: rgba(218,55,60,.16); color: #ffd9dc; }
         button.action.insert:hover { background: rgba(88,101,242,.3); }
+        button.action.reply:hover { background: rgba(35,165,90,.3); }
         button.action.copy:hover { background: rgba(52,152,219,.3); }
         button.action.clear:hover { background: rgba(218,55,60,.28); }
         .status-row {
-          min-height: 22px; color: var(--muted); font-size: 12px; font-weight: 600;
+          min-height: 36px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+          color: var(--muted); font-size: 12px; line-height: 16px; font-weight: 600;
           padding: 0 20px 12px; background: var(--panel-elevated);
         }
+        .hint { max-width: 260px; text-align: right; }
         .answer-shell { display: none; border-top: 1px solid var(--border); }
         .answer-shell.visible { display: block; }
         .answer-header { padding: 10px 20px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid var(--border); }
         .answer { max-height: 260px; overflow: auto; padding: 12px 20px 18px; white-space: pre-wrap; font-size: 14px; line-height: 20px; }
+        .meta-footer { padding: 16px 20px; border-top: 1px solid var(--border); background: var(--panel); }
+        .source-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+        .source-button, .author-chip {
+          display: inline-flex; align-items: center; gap: 8px; min-height: 32px; border: 0; border-radius: 8px;
+          background: rgba(0,0,0,.24); color: var(--text); padding: 6px 11px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; text-decoration: none;
+        }
+        .source-icon { width: 16px; height: 16px; background: currentColor; }
+        .source-icon.website { -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zM3.1 7.333a5.32 5.32 0 011.45-3.06c.35.2.78.37 1.27.5a11.46 11.46 0 00-.42 2.56H3.1zm0 1.334h2.3c.06.94.2 1.8.42 2.56-.49.13-.92.3-1.27.5A5.32 5.32 0 013.1 8.667zm4.23 4.54c-.34-.42-.77-1.17-1.02-2.22.52-.09 1.09-.14 1.69-.14.6 0 1.17.05 1.69.14-.25 1.05-.68 1.8-1.02 2.22-.22.03-.44.04-.67.04s-.45-.01-.67-.04zm2.72-.48c.27-.48.52-1.03.7-1.66.33.1.62.22.86.36a5.36 5.36 0 01-1.56 1.3zM8 9.51c-.72 0-1.4.07-2.02.18a10.03 10.03 0 01-.25-1.02h4.54c-.06.35-.15.69-.25 1.02A11.46 11.46 0 008 9.51zm2.51-2.18H5.49c.05-.76.18-1.45.34-2.06.66.12 1.39.19 2.17.19s1.51-.07 2.17-.19c.16.61.29 1.3.34 2.06zm.24-3.39c-.18-.63-.43-1.18-.7-1.66.6.3 1.13.75 1.56 1.3-.24.14-.53.26-.86.36zm-1.06.08c-.52.09-1.09.14-1.69.14-.6 0-1.17-.05-1.69-.14.25-1.05.68-1.8 1.02-2.22.22-.03.44-.04.67-.04s.45.01.67.04c.34.42.77 1.17 1.02 2.22zM5.95 2.28c-.27.48-.52 1.03-.7 1.66-.33-.1-.62-.22-.86-.36.43-.55.96-1 1.56-1.3zm4.23 8.95c.22-.76.36-1.62.42-2.56h2.3a5.32 5.32 0 01-1.45 3.06 4.5 4.5 0 00-1.27-.5zm.42-3.9a11.46 11.46 0 00-.42-2.56c.49-.13.92-.3 1.27-.5a5.32 5.32 0 011.45 3.06h-2.3z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zM3.1 7.333a5.32 5.32 0 011.45-3.06c.35.2.78.37 1.27.5a11.46 11.46 0 00-.42 2.56H3.1zm0 1.334h2.3c.06.94.2 1.8.42 2.56-.49.13-.92.3-1.27.5A5.32 5.32 0 013.1 8.667zm4.23 4.54c-.34-.42-.77-1.17-1.02-2.22.52-.09 1.09-.14 1.69-.14.6 0 1.17.05 1.69.14-.25 1.05-.68 1.8-1.02 2.22-.22.03-.44.04-.67.04s-.45-.01-.67-.04zm2.72-.48c.27-.48.52-1.03.7-1.66.33.1.62.22.86.36a5.36 5.36 0 01-1.56 1.3zM8 9.51c-.72 0-1.4.07-2.02.18a10.03 10.03 0 01-.25-1.02h4.54c-.06.35-.15.69-.25 1.02A11.46 11.46 0 008 9.51zm2.51-2.18H5.49c.05-.76.18-1.45.34-2.06.66.12 1.39.19 2.17.19s1.51-.07 2.17-.19c.16.61.29 1.3.34 2.06zm.24-3.39c-.18-.63-.43-1.18-.7-1.66.6.3 1.13.75 1.56 1.3-.24.14-.53.26-.86.36zm-1.06.08c-.52.09-1.09.14-1.69.14-.6 0-1.17-.05-1.69-.14.25-1.05.68-1.8 1.02-2.22.22-.03.44-.04.67-.04s.45.01.67.04c.34.42.77 1.17 1.02 2.22zM5.95 2.28c-.27.48-.52 1.03-.7 1.66-.33-.1-.62-.22-.86-.36.43-.55.96-1 1.56-1.3zm4.23 8.95c.22-.76.36-1.62.42-2.56h2.3a5.32 5.32 0 01-1.45 3.06 4.5 4.5 0 00-1.27-.5zm.42-3.9a11.46 11.46 0 00-.42-2.56c.49-.13.92-.3 1.27-.5a5.32 5.32 0 011.45 3.06h-2.3z'/%3E%3C/svg%3E") center / contain no-repeat; }
+        .source-icon.github { -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 .8a7.2 7.2 0 00-2.28 14.03c.36.07.49-.16.49-.35v-1.25c-2 .43-2.42-.86-2.42-.86-.33-.84-.8-1.06-.8-1.06-.66-.45.05-.44.05-.44.73.05 1.11.75 1.11.75.65 1.1 1.7.78 2.11.6.07-.47.26-.78.47-.96-1.6-.18-3.28-.8-3.28-3.56 0-.79.28-1.43.75-1.94-.08-.18-.33-.92.07-1.91 0 0 .61-.2 1.98.74A6.88 6.88 0 018 4.34c.61 0 1.22.08 1.8.24 1.36-.94 1.97-.74 1.97-.74.4.99.15 1.73.07 1.91.47.51.75 1.15.75 1.94 0 2.77-1.69 3.37-3.3 3.55.27.23.5.68.5 1.37v2.03c0 .19.13.42.5.35A7.2 7.2 0 008 .8z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 .8a7.2 7.2 0 00-2.28 14.03c.36.07.49-.16.49-.35v-1.25c-2 .43-2.42-.86-2.42-.86-.33-.84-.8-1.06-.8-1.06-.66-.45.05-.44.05-.44.73.05 1.11.75 1.11.75.65 1.1 1.7.78 2.11.6.07-.47.26-.78.47-.96-1.6-.18-3.28-.8-3.28-3.56 0-.79.28-1.43.75-1.94-.08-.18-.33-.92.07-1.91 0 0 .61-.2 1.98.74A6.88 6.88 0 018 4.34c.61 0 1.22.08 1.8.24 1.36-.94 1.97-.74 1.97-.74.4.99.15 1.73.07 1.91.47.51.75 1.15.75 1.94 0 2.77-1.69 3.37-3.3 3.55.27.23.5.68.5 1.37v2.03c0 .19.13.42.5.35A7.2 7.2 0 008 .8z'/%3E%3C/svg%3E") center / contain no-repeat; }
+        .authors-title { color: var(--text-strong); font-size: 18px; line-height: 22px; font-weight: 800; margin-bottom: 8px; }
+        .author-avatar, .author-avatar img { width: 24px; height: 24px; border-radius: 50%; display: block; }
         @media (max-width: 520px) { .grid, .actions { grid-template-columns: 1fr; } }
       </style>
       <button class="fab" type="button"><span class="magic-wand-icon" aria-hidden="true"></span></button>
@@ -789,19 +1095,80 @@ function startFloatingAssistant() {
         <div class="body">
           <div class="group">
             <div class="grid">
-              <div class="control"><label data-i18n="language"></label><select data-setting="locale"><option value="ru">Русский</option><option value="en">English</option></select></div>
-              <div class="control"><label data-i18n="provider"></label><select data-setting="provider"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="deepseek">DeepSeek</option><option value="custom">Custom</option></select></div>
-              <div class="control full"><label data-i18n="model"></label><select data-setting="modelPreset"><option value="openrouter/auto">OpenRouter Auto</option><option value="gpt-4o-mini">OpenAI GPT-4o mini</option><option value="gpt-4o">OpenAI GPT-4o</option><option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option><option value="mistral-large-latest">Mistral Large Latest</option><option value="deepseek-chat">DeepSeek Chat</option><option value="custom">Custom model ID</option></select></div>
-              <div class="control full"><label data-i18n="apiKey"></label><input data-setting="apiKey" type="password" autocomplete="off" spellcheck="false"></div>
+              <div class="control">
+                <div class="label-with-info"><label data-i18n="language"></label><button class="info-button" type="button" data-info-i18n="infoLanguage"></button></div>
+                <select data-setting="locale"><option value="ru">Русский</option><option value="en">English</option></select>
+              </div>
+              <div class="control">
+                <div class="label-with-info"><label data-i18n="provider"></label><button class="info-button" type="button" data-info-i18n="infoProvider"></button></div>
+                <select data-setting="provider"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="deepseek">DeepSeek</option><option value="custom">Custom</option></select>
+              </div>
+              <div class="control full">
+                <div class="label-with-info"><label data-i18n="model"></label><button class="info-button" type="button" data-info-i18n="infoModel"></button></div>
+                <select data-setting="modelPreset"><option value="openrouter/auto">OpenRouter Auto</option><option value="gpt-4o-mini">OpenAI GPT-4o mini</option><option value="gpt-4o">OpenAI GPT-4o</option><option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option><option value="mistral-large-latest">Mistral Large Latest</option><option value="deepseek-chat">DeepSeek Chat</option><option value="custom">Custom model ID</option></select>
+              </div>
+              <div class="control full">
+                <div class="label-with-info"><label data-i18n="apiKey"></label><button class="info-button" type="button" data-info-i18n="infoApiKey"></button></div>
+                <div class="api-key-shell"><input data-setting="apiKey" type="password" autocomplete="off" spellcheck="false" data-placeholder="apiKeyPlaceholder"><button class="api-key-eye" type="button"><span class="api-key-eye-icon" aria-hidden="true"></span></button></div>
+              </div>
+              <div class="control full custom-endpoint">
+                <div class="label-with-info"><label data-i18n="customEndpoint"></label><button class="info-button" type="button" data-info-i18n="infoCustomEndpoint"></button></div>
+                <input data-setting="customEndpoint" data-placeholder="endpointPlaceholder">
+              </div>
+              <div class="control full custom-model">
+                <div class="label-with-info"><label data-i18n="customModel"></label><button class="info-button" type="button" data-info-i18n="infoCustomModel"></button></div>
+                <input data-setting="customModel" data-placeholder="customModelPlaceholder">
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title" data-i18n="generation"></div>
+            <div class="grid">
+              <div class="control full">
+                <div class="label-with-info"><label data-i18n="systemPrompt"></label><button class="info-button" type="button" data-info-i18n="infoSystemPrompt"></button></div>
+                <textarea data-setting="systemPrompt" data-placeholder="systemPromptPlaceholder"></textarea>
+              </div>
+              <div class="control">
+                <div class="label-with-info"><label data-i18n="temperature"></label><button class="info-button" type="button" data-info-i18n="infoTemperature"></button></div>
+                <input data-setting="temperature" type="number" min="0" max="2" step="0.1">
+              </div>
+              <div class="control">
+                <div class="label-with-info"><label data-i18n="contextMessages"></label><button class="info-button" type="button" data-info-i18n="infoContextMessages"></button></div>
+                <input data-setting="contextMessages" type="number" min="0" max="50" step="1">
+              </div>
+              <div class="control">
+                <div class="label-with-info"><label data-i18n="maxTokens"></label><button class="info-button" type="button" data-info-i18n="infoMaxTokens"></button></div>
+                <input data-setting="maxTokens" type="number" min="1" max="8192" step="1">
+              </div>
+              <div class="control full">
+                <div class="label-with-info"><label data-i18n="memory"></label><button class="info-button" type="button" data-info-i18n="infoMemory"></button></div>
+                <label class="switch-row"><input data-setting="memoryEnabled" type="checkbox"><span data-i18n="memoryEnabledText"></span></label>
+              </div>
             </div>
           </div>
           <div class="prompt-area">
-            <label data-i18n="prompt"></label>
-            <textarea class="prompt"></textarea>
+            <div class="label-with-info"><label data-i18n="prompt"></label><button class="info-button" type="button" data-info-i18n="infoPrompt"></button></div>
+            <textarea class="prompt" data-placeholder="promptPlaceholder"></textarea>
+            <div class="attachments-toolbar">
+              <button class="attach-button" type="button" data-i18n="attachFiles"></button>
+              <div class="attachments-hint" data-i18n="attachmentsHint"></div>
+              <input class="file-input" type="file" multiple>
+            </div>
+            <div class="attachments-list"></div>
           </div>
-          <div class="actions"><button class="action ask" data-i18n="ask"></button><button class="action secondary insert" data-i18n="insert"></button><button class="action secondary copy" data-i18n="copy"></button><button class="action danger clear" data-i18n="clear"></button></div>
-          <div class="status-row"><span class="status"></span></div>
+          <div class="actions"><button class="action ask" data-i18n="ask"></button><button class="action secondary insert" data-i18n="insert"></button><button class="action secondary reply" data-i18n="reply"></button><button class="action secondary copy" data-i18n="copy"></button><button class="action danger clear" data-i18n="clear"></button></div>
+          <div class="status-row"><span class="status"></span><span class="hint" data-i18n="hotkey"></span></div>
           <div class="answer-shell"><div class="answer-header" data-i18n="answer"></div><div class="answer"></div></div>
+          <div class="meta-footer">
+            <div class="source-actions">
+              <button class="source-button" type="button" data-open-url="https://equicord.org"><span class="source-icon website" aria-hidden="true"></span><span data-i18n="website"></span></button>
+              <button class="source-button" type="button" data-open-url="https://github.com/ress1zen/EquicordAIAssistant"><span class="source-icon github" aria-hidden="true"></span><span data-i18n="sourceCode"></span></button>
+            </div>
+            <div class="authors-block">
+              <div class="authors-title" data-i18n="authors"></div>
+              <a class="author-chip" href="https://github.com/ress1zen" target="_blank" rel="noopener noreferrer"><span class="author-avatar"><img src="https://github.com/ress1zen.png?size=96" alt="ress1zen"></span><span>ress1zen</span></a>
+            </div>
+          </div>
         </div>
       </section>
     `;
@@ -816,9 +1183,64 @@ function startFloatingAssistant() {
     const prompt = shadow.querySelector(".prompt") as HTMLTextAreaElement;
     const answer = shadow.querySelector(".answer") as HTMLElement;
     const status = shadow.querySelector(".status") as HTMLElement;
+    const fileInput = shadow.querySelector(".file-input") as HTMLInputElement;
+    const attachmentsList = shadow.querySelector(".attachments-list") as HTMLElement;
+    const attachments: FloatingAttachment[] = [];
+
+    const refreshAttachments = () => renderAttachments(attachmentsList, attachments, index => {
+        attachments.splice(index, 1);
+        refreshAttachments();
+        status.textContent = t("attachmentRemoved");
+    });
+
+    const addFiles = async (files: FileList | File[]) => {
+        const acceptedFiles = Array.from(files).filter(file => file.size <= 8 * 1024 * 1024);
+        if (!acceptedFiles.length) return;
+
+        for (const file of acceptedFiles) {
+            try {
+                attachments.push(await fileToAttachment(file));
+            } catch (error) {
+                logger.warn("Could not read attachment", error);
+            }
+        }
+
+        refreshAttachments();
+        status.textContent = t("attached").replace("{count}", String(attachments.length));
+    };
 
     shadow.querySelector(".fab")?.addEventListener("click", () => panel.classList.toggle("open"));
     shadow.querySelector(".close")?.addEventListener("click", () => panel.classList.remove("open"));
+    shadow.querySelector(".api-key-eye")?.addEventListener("click", () => {
+        const input = shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement;
+        input.type = input.type === "password" ? "text" : "password";
+        syncFloatingForm(shadow);
+    });
+    shadow.querySelector(".attach-button")?.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files) void addFiles(fileInput.files);
+        fileInput.value = "";
+    });
+    prompt.addEventListener("paste", event => {
+        const files = event.clipboardData?.files;
+        if (files?.length) void addFiles(files);
+    });
+    panel.addEventListener("dragover", event => {
+        event.preventDefault();
+        panel.classList.add("dragging");
+    });
+    panel.addEventListener("dragleave", () => panel.classList.remove("dragging"));
+    panel.addEventListener("drop", event => {
+        event.preventDefault();
+        panel.classList.remove("dragging");
+        if (event.dataTransfer?.files?.length) void addFiles(event.dataTransfer.files);
+    });
+    shadow.querySelectorAll("[data-open-url]").forEach(button => {
+        button.addEventListener("click", () => {
+            const url = (button as HTMLElement).dataset.openUrl;
+            if (url) window.open(url, "_blank", "noopener,noreferrer");
+        });
+    });
     shadow.querySelectorAll("[data-setting]").forEach(input => {
         input.addEventListener("input", () => writeFloatingSettings(shadow));
         input.addEventListener("change", () => writeFloatingSettings(shadow));
@@ -847,16 +1269,29 @@ function startFloatingAssistant() {
         }
         status.textContent = t("thinking");
         renderFloatingAnswer(answer, "");
-        const result = await requestAssistant(text, channelId);
+        const result = await requestAssistant(text, channelId, attachments);
         if (result) {
             rememberExchange(text, result);
             renderFloatingAnswer(answer, result);
             prompt.value = "";
+            attachments.splice(0, attachments.length);
+            refreshAttachments();
             status.textContent = t("done");
         }
     });
     shadow.querySelector(".insert")?.addEventListener("click", () => {
         const text = answer.textContent?.trim() || "";
+        if (!text) return;
+        insertTextIntoChatInputBox(text);
+        status.textContent = t("inserted");
+    });
+    shadow.querySelector(".reply")?.addEventListener("click", () => {
+        const text = answer.textContent?.trim() || "";
+        const channelId = SelectedChannelStore.getChannelId();
+        if (!channelId) {
+            status.textContent = t("missingChat");
+            return;
+        }
         if (!text) return;
         insertTextIntoChatInputBox(text);
         status.textContent = t("inserted");
@@ -867,6 +1302,8 @@ function startFloatingAssistant() {
     });
     shadow.querySelector(".clear")?.addEventListener("click", () => {
         prompt.value = "";
+        attachments.splice(0, attachments.length);
+        refreshAttachments();
         renderFloatingAnswer(answer, "");
         status.textContent = t("ready");
     });
