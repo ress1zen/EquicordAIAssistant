@@ -12,6 +12,8 @@ import { ChannelStore, Menu, MessageStore, SelectedChannelStore, showToast, Toas
 const logger = new Logger("AIAssistant");
 const memoryStorageKey = "EquicordAIAssistant:memory";
 const magicWandIconDataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACeklEQVR4AdSWDW6jMBCF30TZe6Q3aU5SkDaVeoq2p1hpsxLkJMlNkns0u7Mzw58NNjiQqqqFYWzseR9jY3uFL07fB4CLX5vPCFZ6BGh95vJPcW+IJAAufme18GP9vNtjEoAP+1fQ6rVS5I1GgYv93UBGAbjcMxhvADvjzxkIRwVBJOl80Rx57VVHAcwBQcQRSHQB8yHwAhYdmS+gH0eLXqiRUxcFoPzlQk+7d/D1AaASTWJsKfv5QPnu1FQ1z0ocx6rMGzBlUxBRgMoJoCDd11IZEoYkX1wq7KohRubMJID6MVEdjkjYtY0/T6qa7n69dLZvJQFoFx0OA9FCMP89QSG9d6RzJbcoevVdIRmg69JZOlHlTznKH3EG1hv8ux46iEZ8OFc6D8DKLdxiqzhoXUgfWRNkrInEriGYc/DHdjxi0lOuWQC+uHixq4Og/Fkm60t03K15fbsZoBaXkEO+HL0kEL2aqeJNAI542C8jKexu52SAzxBXkCSAueLaT7MKxfIkgDnQtT3mYSzssh9Ac6yv1I8CLBG3pdl2Ud5UtqgFrijAEnHTIXqyp95cW8tODgIsEde+1Q7ImaPzKKtlEYrEAEAdYOaYi8jZ+jLe4CWWAw1nqA4yZ9Oo33sA9mKuuJ2aOWn1czcnD8Doa7LBgzG6yKhTynZbO8AMdkXxpnVyuCE5zEipvVoA+/q2umdMiLutDURPUu4pSuxqOx/uDy2AdpSTT+46M/sGcWvf3PjjvTHF76G1e0YLoPW6i0njDmKuuDizDwJOkDy2LXsA0ljOgM+ljaOOV+DgqW2SM19z0nkx0mEAoG2VXrPaS3KKjyDAEtF+36nyfwAAAP//MnqKugAAAAZJREFUAwAePjBQnHzkXwAAAABJRU5ErkJggg==";
+const defaultSystemPrompt = "You are a helpful Discord assistant. Be useful, concise, and practical.";
+const legacySystemPrompt = "You are a helpful Discord assistant. Be useful, concise, and practical. Current user: {current_user}. Current time: {current_time}.";
 let floatingRoot: HTMLDivElement | null = null;
 
 function AssistantIcon(props: any) {
@@ -160,7 +162,7 @@ const settings = definePluginSettings({
     systemPrompt: {
         type: OptionType.STRING,
         description: "System prompt. Placeholders: {current_user}, {current_time}, {channel_id}.",
-        default: "You are a helpful Discord assistant. Be useful, concise, and practical. Current user: {current_user}. Current time: {current_time}.",
+        default: defaultSystemPrompt,
         multiline: true,
     },
     contextMessages: {
@@ -750,6 +752,14 @@ function t(key: string) {
     return (currentLocale() === Locales.English ? en : ru)[key] ?? en[key] ?? key;
 }
 
+function formatTemperatureInput(value: unknown) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "0.7";
+
+    const clamped = Math.max(0, Math.min(2, number));
+    return String(Math.round(clamped * 10) / 10);
+}
+
 function syncFloatingForm(shadow: ShadowRoot) {
     (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value = currentLocale();
     (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value = settings.store.provider;
@@ -758,7 +768,7 @@ function syncFloatingForm(shadow: ShadowRoot) {
     (shadow.querySelector("[data-setting='customEndpoint']") as HTMLInputElement).value = settings.store.customEndpoint;
     (shadow.querySelector("[data-setting='customModel']") as HTMLInputElement).value = settings.store.customModel;
     (shadow.querySelector("[data-setting='systemPrompt']") as HTMLTextAreaElement).value = settings.store.systemPrompt;
-    (shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value = String(settings.store.temperature);
+    (shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value = formatTemperatureInput(settings.store.temperature);
     (shadow.querySelector("[data-setting='contextMessages']") as HTMLInputElement).value = String(settings.store.contextMessages);
     (shadow.querySelector("[data-setting='maxTokens']") as HTMLInputElement).value = String(settings.store.maxTokens);
     (shadow.querySelector("[data-setting='memoryEnabled']") as HTMLInputElement).checked = Boolean(settings.store.memoryEnabled);
@@ -766,7 +776,7 @@ function syncFloatingForm(shadow: ShadowRoot) {
         node.textContent = t((node as HTMLElement).dataset.i18n || "");
     });
     shadow.querySelectorAll("[data-info-i18n]").forEach(node => {
-        (node as HTMLElement).title = t((node as HTMLElement).dataset.infoI18n || "");
+        (node as HTMLElement).dataset.tooltip = t((node as HTMLElement).dataset.infoI18n || "");
     });
     shadow.querySelectorAll("[data-placeholder]").forEach(node => {
         (node as HTMLInputElement | HTMLTextAreaElement).placeholder = t((node as HTMLElement).dataset.placeholder || "");
@@ -783,7 +793,7 @@ function syncFloatingForm(shadow: ShadowRoot) {
         : t("hideApiKey");
 }
 
-function writeFloatingSettings(shadow: ShadowRoot) {
+function writeFloatingSettings(shadow: ShadowRoot, shouldSync = true) {
     settings.store.locale = (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value;
     settings.store.provider = (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value;
     settings.store.modelPreset = (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value;
@@ -791,11 +801,11 @@ function writeFloatingSettings(shadow: ShadowRoot) {
     settings.store.customEndpoint = (shadow.querySelector("[data-setting='customEndpoint']") as HTMLInputElement).value;
     settings.store.customModel = (shadow.querySelector("[data-setting='customModel']") as HTMLInputElement).value;
     settings.store.systemPrompt = (shadow.querySelector("[data-setting='systemPrompt']") as HTMLTextAreaElement).value;
-    settings.store.temperature = Number((shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value) || 0.7;
+    settings.store.temperature = Number(formatTemperatureInput((shadow.querySelector("[data-setting='temperature']") as HTMLInputElement).value));
     settings.store.contextMessages = Number((shadow.querySelector("[data-setting='contextMessages']") as HTMLInputElement).value) || 0;
     settings.store.maxTokens = Number((shadow.querySelector("[data-setting='maxTokens']") as HTMLInputElement).value) || 900;
     settings.store.memoryEnabled = (shadow.querySelector("[data-setting='memoryEnabled']") as HTMLInputElement).checked;
-    syncFloatingForm(shadow);
+    if (shouldSync) syncFloatingForm(shadow);
 }
 
 function renderFloatingAnswer(answer: HTMLElement, text: string) {
@@ -882,6 +892,10 @@ function renderAttachments(list: HTMLElement, attachments: FloatingAttachment[],
 
 function startFloatingAssistant() {
     stopFloatingAssistant();
+
+    if (settings.store.systemPrompt === legacySystemPrompt) {
+        settings.store.systemPrompt = defaultSystemPrompt;
+    }
 
     floatingRoot = document.createElement("div");
     floatingRoot.id = "equicord-ai-assistant-floating";
@@ -997,7 +1011,8 @@ function startFloatingAssistant() {
           color: var(--text); padding: 10px 12px; font: inherit; font-size: 14px; line-height: 20px; outline: none;
           transition: border-color .14s ease, background .14s ease;
         }
-        input:hover, select:hover, textarea:hover { background: var(--field-hover); }
+        input:hover, textarea:hover { background-color: var(--field-hover); }
+        select:hover { background-color: var(--field-hover); }
         input:focus, select:focus, textarea:focus { border-color: var(--accent); }
         textarea { min-height: 92px; resize: vertical; }
         select {
@@ -1080,10 +1095,17 @@ function startFloatingAssistant() {
           background: rgba(0,0,0,.24); color: var(--text); padding: 6px 11px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; text-decoration: none;
         }
         .source-icon { width: 16px; height: 16px; background: currentColor; }
-        .source-icon.website { -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zM3.1 7.333a5.32 5.32 0 011.45-3.06c.35.2.78.37 1.27.5a11.46 11.46 0 00-.42 2.56H3.1zm0 1.334h2.3c.06.94.2 1.8.42 2.56-.49.13-.92.3-1.27.5A5.32 5.32 0 013.1 8.667zm4.23 4.54c-.34-.42-.77-1.17-1.02-2.22.52-.09 1.09-.14 1.69-.14.6 0 1.17.05 1.69.14-.25 1.05-.68 1.8-1.02 2.22-.22.03-.44.04-.67.04s-.45-.01-.67-.04zm2.72-.48c.27-.48.52-1.03.7-1.66.33.1.62.22.86.36a5.36 5.36 0 01-1.56 1.3zM8 9.51c-.72 0-1.4.07-2.02.18a10.03 10.03 0 01-.25-1.02h4.54c-.06.35-.15.69-.25 1.02A11.46 11.46 0 008 9.51zm2.51-2.18H5.49c.05-.76.18-1.45.34-2.06.66.12 1.39.19 2.17.19s1.51-.07 2.17-.19c.16.61.29 1.3.34 2.06zm.24-3.39c-.18-.63-.43-1.18-.7-1.66.6.3 1.13.75 1.56 1.3-.24.14-.53.26-.86.36zm-1.06.08c-.52.09-1.09.14-1.69.14-.6 0-1.17-.05-1.69-.14.25-1.05.68-1.8 1.02-2.22.22-.03.44-.04.67-.04s.45.01.67.04c.34.42.77 1.17 1.02 2.22zM5.95 2.28c-.27.48-.52 1.03-.7 1.66-.33-.1-.62-.22-.86-.36.43-.55.96-1 1.56-1.3zm4.23 8.95c.22-.76.36-1.62.42-2.56h2.3a5.32 5.32 0 01-1.45 3.06 4.5 4.5 0 00-1.27-.5zm.42-3.9a11.46 11.46 0 00-.42-2.56c.49-.13.92-.3 1.27-.5a5.32 5.32 0 011.45 3.06h-2.3z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 1.333A6.667 6.667 0 108 14.667 6.667 6.667 0 008 1.333zM3.1 7.333a5.32 5.32 0 011.45-3.06c.35.2.78.37 1.27.5a11.46 11.46 0 00-.42 2.56H3.1zm0 1.334h2.3c.06.94.2 1.8.42 2.56-.49.13-.92.3-1.27.5A5.32 5.32 0 013.1 8.667zm4.23 4.54c-.34-.42-.77-1.17-1.02-2.22.52-.09 1.09-.14 1.69-.14.6 0 1.17.05 1.69.14-.25 1.05-.68 1.8-1.02 2.22-.22.03-.44.04-.67.04s-.45-.01-.67-.04zm2.72-.48c.27-.48.52-1.03.7-1.66.33.1.62.22.86.36a5.36 5.36 0 01-1.56 1.3zM8 9.51c-.72 0-1.4.07-2.02.18a10.03 10.03 0 01-.25-1.02h4.54c-.06.35-.15.69-.25 1.02A11.46 11.46 0 008 9.51zm2.51-2.18H5.49c.05-.76.18-1.45.34-2.06.66.12 1.39.19 2.17.19s1.51-.07 2.17-.19c.16.61.29 1.3.34 2.06zm.24-3.39c-.18-.63-.43-1.18-.7-1.66.6.3 1.13.75 1.56 1.3-.24.14-.53.26-.86.36zm-1.06.08c-.52.09-1.09.14-1.69.14-.6 0-1.17-.05-1.69-.14.25-1.05.68-1.8 1.02-2.22.22-.03.44-.04.67-.04s.45.01.67.04c.34.42.77 1.17 1.02 2.22zM5.95 2.28c-.27.48-.52 1.03-.7 1.66-.33-.1-.62-.22-.86-.36.43-.55.96-1 1.56-1.3zm4.23 8.95c.22-.76.36-1.62.42-2.56h2.3a5.32 5.32 0 01-1.45 3.06 4.5 4.5 0 00-1.27-.5zm.42-3.9a11.46 11.46 0 00-.42-2.56c.49-.13.92-.3 1.27-.5a5.32 5.32 0 011.45 3.06h-2.3z'/%3E%3C/svg%3E") center / contain no-repeat; }
+        .source-icon.website { -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M3 2h6v1.6H4.6v7.8h7.8V7H14v6H3V2zm7.2 0H14v3.8h-1.6V4.73L8.97 8.16 7.84 7.03l3.43-3.43H10.2V2z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M3 2h6v1.6H4.6v7.8h7.8V7H14v6H3V2zm7.2 0H14v3.8h-1.6V4.73L8.97 8.16 7.84 7.03l3.43-3.43H10.2V2z'/%3E%3C/svg%3E") center / contain no-repeat; }
         .source-icon.github { -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 .8a7.2 7.2 0 00-2.28 14.03c.36.07.49-.16.49-.35v-1.25c-2 .43-2.42-.86-2.42-.86-.33-.84-.8-1.06-.8-1.06-.66-.45.05-.44.05-.44.73.05 1.11.75 1.11.75.65 1.1 1.7.78 2.11.6.07-.47.26-.78.47-.96-1.6-.18-3.28-.8-3.28-3.56 0-.79.28-1.43.75-1.94-.08-.18-.33-.92.07-1.91 0 0 .61-.2 1.98.74A6.88 6.88 0 018 4.34c.61 0 1.22.08 1.8.24 1.36-.94 1.97-.74 1.97-.74.4.99.15 1.73.07 1.91.47.51.75 1.15.75 1.94 0 2.77-1.69 3.37-3.3 3.55.27.23.5.68.5 1.37v2.03c0 .19.13.42.5.35A7.2 7.2 0 008 .8z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M8 .8a7.2 7.2 0 00-2.28 14.03c.36.07.49-.16.49-.35v-1.25c-2 .43-2.42-.86-2.42-.86-.33-.84-.8-1.06-.8-1.06-.66-.45.05-.44.05-.44.73.05 1.11.75 1.11.75.65 1.1 1.7.78 2.11.6.07-.47.26-.78.47-.96-1.6-.18-3.28-.8-3.28-3.56 0-.79.28-1.43.75-1.94-.08-.18-.33-.92.07-1.91 0 0 .61-.2 1.98.74A6.88 6.88 0 018 4.34c.61 0 1.22.08 1.8.24 1.36-.94 1.97-.74 1.97-.74.4.99.15 1.73.07 1.91.47.51.75 1.15.75 1.94 0 2.77-1.69 3.37-3.3 3.55.27.23.5.68.5 1.37v2.03c0 .19.13.42.5.35A7.2 7.2 0 008 .8z'/%3E%3C/svg%3E") center / contain no-repeat; }
         .authors-title { color: var(--text-strong); font-size: 18px; line-height: 22px; font-weight: 800; margin-bottom: 8px; }
         .author-avatar, .author-avatar img { width: 24px; height: 24px; border-radius: 50%; display: block; }
+        .floating-tooltip {
+          position: fixed; z-index: 2147483647; display: none; max-width: 260px; padding: 8px 10px;
+          border-radius: 5px; background: var(--background-floating, #111214); color: var(--text-normal, #dbdee1);
+          box-shadow: var(--elevation-high, 0 8px 24px rgba(0,0,0,.34)); font-size: 12px; line-height: 16px; font-weight: 600;
+          text-align: center; pointer-events: none;
+        }
+        .floating-tooltip.active { display: block; }
         @media (max-width: 520px) { .grid, .actions { grid-template-columns: 1fr; } }
       </style>
       <button class="fab" type="button"><span class="magic-wand-icon" aria-hidden="true"></span></button>
@@ -1171,6 +1193,7 @@ function startFloatingAssistant() {
           </div>
         </div>
       </section>
+      <div class="floating-tooltip"></div>
     `;
 
     shadow.querySelectorAll(".magic-wand-icon").forEach(icon => {
@@ -1183,6 +1206,7 @@ function startFloatingAssistant() {
     const prompt = shadow.querySelector(".prompt") as HTMLTextAreaElement;
     const answer = shadow.querySelector(".answer") as HTMLElement;
     const status = shadow.querySelector(".status") as HTMLElement;
+    const tooltip = shadow.querySelector(".floating-tooltip") as HTMLElement;
     const fileInput = shadow.querySelector(".file-input") as HTMLInputElement;
     const attachmentsList = shadow.querySelector(".attachments-list") as HTMLElement;
     const attachments: FloatingAttachment[] = [];
@@ -1207,6 +1231,28 @@ function startFloatingAssistant() {
 
         refreshAttachments();
         status.textContent = t("attached").replace("{count}", String(attachments.length));
+    };
+
+    const hideTooltip = () => {
+        tooltip.classList.remove("active");
+    };
+    const showTooltip = (button: HTMLElement) => {
+        const text = button.dataset.tooltip || "";
+        if (!text) return;
+
+        tooltip.textContent = text;
+        tooltip.classList.add("active");
+        tooltip.style.left = "0px";
+        tooltip.style.top = "0px";
+
+        const rect = button.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const left = Math.max(8, Math.min(window.innerWidth - tooltipRect.width - 8, rect.left + rect.width / 2 - tooltipRect.width / 2));
+        let top = rect.top - tooltipRect.height - 8;
+        if (top < 8) top = rect.bottom + 8;
+
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
     };
 
     shadow.querySelector(".fab")?.addEventListener("click", () => panel.classList.toggle("open"));
@@ -1241,8 +1287,14 @@ function startFloatingAssistant() {
             if (url) window.open(url, "_blank", "noopener,noreferrer");
         });
     });
+    shadow.querySelectorAll(".info-button").forEach(button => {
+        button.addEventListener("pointerenter", () => showTooltip(button as HTMLElement));
+        button.addEventListener("pointerleave", hideTooltip);
+        button.addEventListener("focus", () => showTooltip(button as HTMLElement));
+        button.addEventListener("blur", hideTooltip);
+    });
     shadow.querySelectorAll("[data-setting]").forEach(input => {
-        input.addEventListener("input", () => writeFloatingSettings(shadow));
+        input.addEventListener("input", () => writeFloatingSettings(shadow, false));
         input.addEventListener("change", () => writeFloatingSettings(shadow));
     });
     prompt.addEventListener("keydown", event => {
