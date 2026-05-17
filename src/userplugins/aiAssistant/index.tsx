@@ -7,12 +7,20 @@ import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { findExportedComponentLazy } from "@webpack";
-import { ChannelStore, Menu, MessageStore, showToast, Toasts, UserStore } from "@webpack/common";
+import { ChannelStore, Menu, MessageStore, SelectedChannelStore, showToast, Toasts, UserStore } from "@webpack/common";
 
 const logger = new Logger("AIAssistant");
-const SparklesIcon = findExportedComponentLazy("SparklesIcon");
 const memoryStorageKey = "EquicordAIAssistant:memory";
+let floatingRoot: HTMLDivElement | null = null;
+
+function AssistantIcon(props: any) {
+    return (
+        <svg {...props} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 20l10.8-10.8 3.9 3.9L7.9 23.9 4 20z" fill="currentColor" />
+            <path d="M16.7 2.2l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7zM7.4 3.4l.55 1.65L9.6 5.6l-1.65.55L7.4 7.8l-.55-1.65L5.2 5.6l1.65-.55L7.4 3.4zM19.4 15.7l.55 1.65 1.65.55-1.65.55-.55 1.65-.55-1.65-1.65-.55 1.65-.55.55-1.65z" fill="currentColor" />
+        </svg>
+    );
+}
 
 const Author = {
     name: "ress1zen",
@@ -250,20 +258,24 @@ function getModel() {
         : String(settings.store.modelPreset).trim();
 }
 
+function currentLocale() {
+    return settings.store.locale === Locales.English ? Locales.English : Locales.Russian;
+}
+
 function responseLanguageInstruction() {
-    return settings.store.locale === Locales.English
-        ? "IMPORTANT: answer strictly in English. Do not switch to another language unless the user explicitly asks for translation."
-        : "ВАЖНО: отвечай строго на русском языке. Даже если вопрос сложный, технический или содержит английские термины, основной ответ должен быть на русском.";
+    return currentLocale() === Locales.English
+        ? "IMPORTANT: answer strictly in English. This language rule has priority over the system prompt, memory, channel context, and previous messages. Do not switch to another language unless the user explicitly asks for translation."
+        : "ВАЖНО: отвечай строго на русском языке. Это правило важнее системного промпта, памяти, контекста канала и прошлых сообщений. Даже если вопрос сложный, технический или содержит английские термины, основной ответ должен быть на русском.";
 }
 
 function responseLanguageReminder() {
-    return settings.store.locale === Locales.English
-        ? "Answer strictly in English."
-        : "Ответь строго на русском языке.";
+    return currentLocale() === Locales.English
+        ? "Language rule: answer strictly in English."
+        : "Правило языка: ответь строго на русском языке.";
 }
 
 function withLanguageReminder(prompt: string) {
-    return `${prompt.trim()}\n\n${responseLanguageReminder()}`.trim();
+    return `${responseLanguageReminder()}\n\n${prompt.trim()}\n\n${responseLanguageReminder()}`.trim();
 }
 
 function getSystemPrompt(channelId: string) {
@@ -500,7 +512,7 @@ async function outputAnswer(channelId: string, answer: string, outputMode = sett
 
 async function askAndOutput(channelId: string, prompt: string, outputMode = settings.store.outputMode) {
     sendBotMessage(channelId, {
-        content: "Thinking...",
+        content: t("thinking"),
         author: {
             username: "AI Assistant",
         },
@@ -508,7 +520,7 @@ async function askAndOutput(channelId: string, prompt: string, outputMode = sett
 
     const answer = await requestAssistant(prompt, channelId);
     if (!answer) {
-        sendLocalBotAnswer(channelId, "No response. Check the plugin settings, selected model, API key, provider endpoint, or console errors.");
+        sendLocalBotAnswer(channelId, t("noResponse"));
         return;
     }
 
@@ -519,28 +531,267 @@ async function askAndOutput(channelId: string, prompt: string, outputMode = sett
 type MessageAction = "answer" | "reply" | "explain" | "rewrite" | "shorten" | "translate";
 
 function messageAssistPrompt(text: string, action: MessageAction = "answer") {
-    const taskByAction: Record<MessageAction, string> = {
+    const ruTaskByAction: Record<MessageAction, string> = {
+        answer: "Если выбранное сообщение является вопросом, ответь на него напрямую. Если это просьба, выполни её. Если нужен ответ в чат, предложи полезный ответ.",
+        reply: "Напиши прямой ответ на выбранное сообщение. Верни только текст ответа.",
+        explain: "Объясни выбранное сообщение понятно и практично.",
+        rewrite: "Перепиши выбранное сообщение более понятно и естественно. Сохрани смысл.",
+        shorten: "Сократи выбранное сообщение, сохранив главный смысл.",
+        translate: "Переведи выбранное сообщение на русский язык.",
+    };
+    const enTaskByAction: Record<MessageAction, string> = {
         answer: "If the selected message is a question, answer it directly. If it is a request, fulfill it. If it needs a reply, suggest a useful reply.",
         reply: "Write a direct reply to the selected message. Return only the reply text.",
         explain: "Explain the selected message clearly and practically.",
         rewrite: "Rewrite the selected message in a clearer, more natural style. Preserve the meaning.",
         shorten: "Shorten the selected message while preserving the key meaning.",
-        translate: settings.store.locale === Locales.English
-            ? "Translate the selected message into English."
-            : "Переведи выбранное сообщение на русский язык.",
+        translate: "Translate the selected message into English.",
     };
+    const isEnglish = currentLocale() === Locales.English;
 
     return [
-        "You are helping with a Discord message.",
-        taskByAction[action],
-        "Keep the answer practical and concise.",
+        isEnglish ? "You are helping with a Discord message." : "Ты помогаешь с сообщением в Discord.",
+        isEnglish ? enTaskByAction[action] : ruTaskByAction[action],
+        isEnglish ? "Keep the answer practical and concise." : "Отвечай практично и кратко.",
         "",
-        `Message:\n${text}`,
+        `${isEnglish ? "Message" : "Сообщение"}:\n${text}`,
     ].join("\n");
 }
 
 function runMessageAction(channelId: string, text: string, action: MessageAction, outputMode?: string) {
     return askAndOutput(channelId, messageAssistPrompt(text, action), outputMode);
+}
+
+function t(key: string) {
+    const ru: Record<string, string> = {
+        title: "AI-ассистент",
+        subtitle: "Личный помощник для вопросов и быстрых ответов",
+        language: "Язык",
+        provider: "Провайдер",
+        model: "Модель",
+        apiKey: "API-ключ",
+        prompt: "Запрос",
+        ask: "Спросить",
+        insert: "Вставить",
+        copy: "Копировать",
+        clear: "Очистить",
+        answer: "Ответ",
+        ready: "Готов.",
+        thinking: "Думаю...",
+        done: "Готово.",
+        missingChat: "Сначала открой текстовый канал или личный чат.",
+        missingKey: "Не указан API-ключ.",
+        emptyPrompt: "Запрос пустой.",
+        noResponse: "Ответ не получен. Проверь настройки плагина, выбранную модель, API-ключ, endpoint провайдера или ошибки в консоли.",
+        copied: "Скопировано.",
+        inserted: "Вставлено в поле ввода.",
+        open: "Открыть AI-ассистента",
+        close: "Закрыть",
+    };
+
+    const en: Record<string, string> = {
+        title: "AI Assistant",
+        subtitle: "Private helper for quick replies and questions",
+        language: "Language",
+        provider: "Provider",
+        model: "Model",
+        apiKey: "API key",
+        prompt: "Prompt",
+        ask: "Ask",
+        insert: "Insert",
+        copy: "Copy",
+        clear: "Clear",
+        answer: "Answer",
+        ready: "Ready.",
+        thinking: "Thinking...",
+        done: "Done.",
+        missingChat: "Open a text channel or DM first.",
+        missingKey: "API key is missing.",
+        emptyPrompt: "Prompt is empty.",
+        noResponse: "No response. Check the plugin settings, selected model, API key, provider endpoint, or console errors.",
+        copied: "Copied.",
+        inserted: "Inserted into chat box.",
+        open: "Open AI Assistant",
+        close: "Close",
+    };
+
+    return (currentLocale() === Locales.English ? en : ru)[key] ?? en[key] ?? key;
+}
+
+function syncFloatingForm(shadow: ShadowRoot) {
+    (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value = currentLocale();
+    (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value = settings.store.provider;
+    (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value = settings.store.modelPreset;
+    (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).value = settings.store.apiKey;
+    shadow.querySelectorAll("[data-i18n]").forEach(node => {
+        node.textContent = t((node as HTMLElement).dataset.i18n || "");
+    });
+    const fab = shadow.querySelector(".fab") as HTMLButtonElement;
+    const close = shadow.querySelector(".close") as HTMLButtonElement;
+    fab.title = t("open");
+    close.title = t("close");
+}
+
+function writeFloatingSettings(shadow: ShadowRoot) {
+    settings.store.locale = (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value;
+    settings.store.provider = (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value;
+    settings.store.modelPreset = (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value;
+    settings.store.apiKey = (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).value;
+    syncFloatingForm(shadow);
+}
+
+function renderFloatingAnswer(answer: HTMLElement, text: string) {
+    answer.textContent = text;
+    answer.parentElement?.classList.toggle("visible", Boolean(text.trim()));
+}
+
+function startFloatingAssistant() {
+    stopFloatingAssistant();
+
+    floatingRoot = document.createElement("div");
+    floatingRoot.id = "equicord-ai-assistant-floating";
+    const shadow = floatingRoot.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; font-family: var(--font-primary, "gg sans", "Noto Sans", sans-serif); }
+        * { box-sizing: border-box; font-family: inherit; }
+        .fab {
+          position: fixed; right: 18px; bottom: 18px; z-index: 2147483647;
+          width: 48px; height: 48px; border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
+          background: var(--brand-experiment, #5865f2); color: #d7dcff; cursor: pointer;
+          display: grid; place-items: center; box-shadow: 0 16px 42px rgba(0,0,0,.42);
+        }
+        .fab svg { width: 30px; height: 30px; }
+        .panel {
+          position: fixed; right: 18px; bottom: 78px; z-index: 2147483647;
+          width: min(520px, calc(100vw - 28px)); max-height: min(760px, calc(100vh - 100px));
+          display: none; flex-direction: column; overflow: hidden;
+          border: 1px solid rgba(0,0,0,.3); border-radius: 8px;
+          background: var(--modal-background, #313338); color: var(--text-normal, #dbdee1);
+          box-shadow: var(--elevation-high, 0 18px 48px rgba(0,0,0,.52));
+        }
+        .panel.open { display: flex; }
+        .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .mark { width: 36px; height: 36px; border-radius: 8px; background: var(--brand-experiment, #5865f2); color: #d7dcff; display: grid; place-items: center; flex: 0 0 auto; }
+        .mark svg { width: 22px; height: 22px; }
+        .title { color: var(--header-primary, #f2f3f5); font-size: 20px; line-height: 24px; font-weight: 700; }
+        .subtitle { margin-top: 2px; color: var(--text-muted, #b5bac1); font-size: 13px; line-height: 18px; }
+        .close { width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: var(--interactive-normal, #b5bac1); cursor: pointer; font-size: 20px; }
+        .body { overflow: auto; min-height: 0; padding: 16px 20px 0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .full { grid-column: 1 / -1; }
+        label { display: block; color: var(--header-secondary, #b5bac1); font-size: 12px; line-height: 16px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; }
+        input, select, textarea {
+          width: 100%; border: 1px solid transparent; border-radius: 4px; background: var(--input-background, #1e1f22);
+          color: var(--text-normal, #dbdee1); padding: 10px 12px; font-size: 14px; line-height: 20px; outline: none;
+        }
+        textarea { min-height: 108px; resize: vertical; }
+        input:focus, select:focus, textarea:focus { border-color: var(--brand-experiment, #5865f2); }
+        .actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 0; }
+        button.action { min-height: 38px; border: 1px solid transparent; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px; font-weight: 700; }
+        .ask { background: var(--brand-experiment, #5865f2); }
+        .secondary { background: var(--background-modifier-selected, #4e5058); }
+        .danger { background: rgba(218,55,60,.14); border-color: var(--status-danger, #da373c) !important; color: #ffb3b8 !important; }
+        .status-row { min-height: 24px; color: var(--text-muted, #b5bac1); font-size: 12px; font-weight: 600; padding-bottom: 12px; }
+        .answer-shell { display: none; margin: 0 -20px; border-top: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .answer-shell.visible { display: block; }
+        .answer-header { padding: 10px 20px; color: var(--text-muted, #b5bac1); font-size: 12px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .answer { max-height: 260px; overflow: auto; padding: 12px 20px 18px; white-space: pre-wrap; font-size: 14px; line-height: 20px; }
+        @media (max-width: 520px) { .grid, .actions { grid-template-columns: 1fr; } }
+      </style>
+      <button class="fab" type="button"></button>
+      <section class="panel">
+        <div class="header">
+          <div class="brand"><div class="mark"></div><div><div class="title" data-i18n="title"></div><div class="subtitle" data-i18n="subtitle"></div></div></div>
+          <button class="close" type="button">×</button>
+        </div>
+        <div class="body">
+          <div class="grid">
+            <div><label data-i18n="language"></label><select data-setting="locale"><option value="ru">Русский</option><option value="en">English</option></select></div>
+            <div><label data-i18n="provider"></label><select data-setting="provider"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="deepseek">DeepSeek</option><option value="custom">Custom</option></select></div>
+            <div class="full"><label data-i18n="model"></label><select data-setting="modelPreset"><option value="openrouter/auto">OpenRouter Auto</option><option value="gpt-4o-mini">OpenAI GPT-4o mini</option><option value="gpt-4o">OpenAI GPT-4o</option><option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option><option value="mistral-large-latest">Mistral Large Latest</option><option value="deepseek-chat">DeepSeek Chat</option><option value="custom">Custom model ID</option></select></div>
+            <div class="full"><label data-i18n="apiKey"></label><input data-setting="apiKey" type="password" autocomplete="off"></div>
+            <div class="full"><label data-i18n="prompt"></label><textarea class="prompt"></textarea></div>
+          </div>
+          <div class="actions"><button class="action ask" data-i18n="ask"></button><button class="action secondary insert" data-i18n="insert"></button><button class="action secondary copy" data-i18n="copy"></button><button class="action danger clear" data-i18n="clear"></button></div>
+          <div class="status-row"><span class="status"></span></div>
+          <div class="answer-shell"><div class="answer-header" data-i18n="answer"></div><div class="answer"></div></div>
+        </div>
+      </section>
+    `;
+
+    const icon = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20l10.8-10.8 3.9 3.9L7.9 23.9 4 20z" fill="currentColor"/><path d="M16.7 2.2l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7zM7.4 3.4l.55 1.65L9.6 5.6l-1.65.55L7.4 7.8l-.55-1.65L5.2 5.6l1.65-.55L7.4 3.4zM19.4 15.7l.55 1.65 1.65.55-1.65.55-.55 1.65-.55-1.65-1.65-.55 1.65-.55.55-1.65z" fill="currentColor"/></svg>`;
+    shadow.querySelector(".fab")!.innerHTML = icon;
+    shadow.querySelector(".mark")!.innerHTML = icon;
+
+    const panel = shadow.querySelector(".panel") as HTMLElement;
+    const prompt = shadow.querySelector(".prompt") as HTMLTextAreaElement;
+    const answer = shadow.querySelector(".answer") as HTMLElement;
+    const status = shadow.querySelector(".status") as HTMLElement;
+
+    shadow.querySelector(".fab")?.addEventListener("click", () => panel.classList.toggle("open"));
+    shadow.querySelector(".close")?.addEventListener("click", () => panel.classList.remove("open"));
+    shadow.querySelectorAll("[data-setting]").forEach(input => {
+        input.addEventListener("input", () => writeFloatingSettings(shadow));
+        input.addEventListener("change", () => writeFloatingSettings(shadow));
+    });
+    prompt.addEventListener("keydown", event => {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            (shadow.querySelector(".ask") as HTMLButtonElement).click();
+        }
+    });
+    shadow.querySelector(".ask")?.addEventListener("click", async () => {
+        writeFloatingSettings(shadow);
+        const channelId = SelectedChannelStore.getChannelId();
+        const text = prompt.value.trim();
+        if (!channelId) {
+            status.textContent = t("missingChat");
+            return;
+        }
+        if (!text) {
+            status.textContent = t("emptyPrompt");
+            return;
+        }
+        if (!settings.store.apiKey.trim()) {
+            status.textContent = t("missingKey");
+            return;
+        }
+        status.textContent = t("thinking");
+        renderFloatingAnswer(answer, "");
+        const result = await requestAssistant(text, channelId);
+        if (result) {
+            rememberExchange(text, result);
+            renderFloatingAnswer(answer, result);
+            prompt.value = "";
+            status.textContent = t("done");
+        }
+    });
+    shadow.querySelector(".insert")?.addEventListener("click", () => {
+        const text = answer.textContent?.trim() || "";
+        if (!text) return;
+        insertTextIntoChatInputBox(text);
+        status.textContent = t("inserted");
+    });
+    shadow.querySelector(".copy")?.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(answer.textContent?.trim() || "");
+        status.textContent = t("copied");
+    });
+    shadow.querySelector(".clear")?.addEventListener("click", () => {
+        prompt.value = "";
+        renderFloatingAnswer(answer, "");
+        status.textContent = t("ready");
+    });
+
+    syncFloatingForm(shadow);
+    status.textContent = t("ready");
+    document.documentElement.appendChild(floatingRoot);
+}
+
+function stopFloatingAssistant() {
+    floatingRoot?.remove();
+    floatingRoot = null;
 }
 
 const messageCtxPatch: NavContextMenuPatchCallback = (children, { message }: { message: Message; }) => {
@@ -554,7 +805,7 @@ const messageCtxPatch: NavContextMenuPatchCallback = (children, { message }: { m
         <Menu.MenuItem
             id="vc-ai-assistant"
             label="Answer With AI"
-            icon={SparklesIcon}
+            icon={AssistantIcon}
         >
             <Menu.MenuItem
                 id="vc-ai-assistant-answer"
@@ -601,20 +852,22 @@ export default definePlugin({
         message: messageCtxPatch,
     },
     messagePopoverButton: {
-        icon: SparklesIcon,
+        icon: AssistantIcon,
         render(message: Message) {
             const text = messageToText(message);
             if (!text) return null;
 
             return {
-                label: "Answer With AI",
-                icon: SparklesIcon,
+                label: currentLocale() === Locales.English ? "Answer With AI" : "Ответить с AI",
+                icon: AssistantIcon,
                 message,
                 channel: ChannelStore.getChannel(message.channel_id),
                 onClick: () => runMessageAction(message.channel_id, text, "answer"),
             };
         },
     },
+    start: startFloatingAssistant,
+    stop: stopFloatingAssistant,
     commands: [
         {
             name: "ai",
