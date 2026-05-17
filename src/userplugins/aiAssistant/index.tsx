@@ -14,6 +14,7 @@ const memoryStorageKey = "EquicordAIAssistant:memory";
 const magicWandIconDataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACeklEQVR4AdSWDW6jMBCF30TZe6Q3aU5SkDaVeoq2p1hpsxLkJMlNkns0u7Mzw58NNjiQqqqFYWzseR9jY3uFL07fB4CLX5vPCFZ6BGh95vJPcW+IJAAufme18GP9vNtjEoAP+1fQ6rVS5I1GgYv93UBGAbjcMxhvADvjzxkIRwVBJOl80Rx57VVHAcwBQcQRSHQB8yHwAhYdmS+gH0eLXqiRUxcFoPzlQk+7d/D1AaASTWJsKfv5QPnu1FQ1z0ocx6rMGzBlUxBRgMoJoCDd11IZEoYkX1wq7KohRubMJID6MVEdjkjYtY0/T6qa7n69dLZvJQFoFx0OA9FCMP89QSG9d6RzJbcoevVdIRmg69JZOlHlTznKH3EG1hv8ux46iEZ8OFc6D8DKLdxiqzhoXUgfWRNkrInEriGYc/DHdjxi0lOuWQC+uHixq4Og/Fkm60t03K15fbsZoBaXkEO+HL0kEL2aqeJNAI542C8jKexu52SAzxBXkCSAueLaT7MKxfIkgDnQtT3mYSzssh9Ac6yv1I8CLBG3pdl2Ud5UtqgFrijAEnHTIXqyp95cW8tODgIsEde+1Q7ImaPzKKtlEYrEAEAdYOaYi8jZ+jLe4CWWAw1nqA4yZ9Oo33sA9mKuuJ2aOWn1czcnD8Doa7LBgzG6yKhTynZbO8AMdkXxpnVyuCE5zEipvVoA+/q2umdMiLutDURPUu4pSuxqOx/uDy2AdpSTT+46M/sGcWvf3PjjvTHF76G1e0YLoPW6i0njDmKuuDizDwJOkDy2LXsA0ljOgM+ljaOOV+DgqW2SM19z0nkx0mEAoG2VXrPaS3KKjyDAEtF+36nyfwAAAP//MnqKugAAAAZJREFUAwAePjBQnHzkXwAAAABJRU5ErkJggg==";
 const defaultSystemPrompt = "You are a helpful Discord assistant. Be useful, concise, and practical.";
 const legacySystemPrompt = "You are a helpful Discord assistant. Be useful, concise, and practical. Current user: {current_user}. Current time: {current_time}.";
+const floatingFallbackChannelId = "ai-assistant-floating";
 let floatingRoot: HTMLDivElement | null = null;
 
 function AssistantIcon(props: any) {
@@ -395,6 +396,8 @@ function messageToText(message: Message) {
 }
 
 function getRecentContext(channelId: string): ApiMessage[] {
+    if (!channelId || channelId === floatingFallbackChannelId) return [];
+
     const count = Math.max(0, Math.min(50, Number(settings.store.contextMessages) || 0));
     if (!count) return [];
 
@@ -808,9 +811,115 @@ function writeFloatingSettings(shadow: ShadowRoot, shouldSync = true) {
     if (shouldSync) syncFloatingForm(shadow);
 }
 
+function appendInlineMarkdown(parent: HTMLElement, text: string) {
+    const tokenPattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = tokenPattern.exec(text))) {
+        if (match.index > cursor) {
+            parent.append(document.createTextNode(text.slice(cursor, match.index)));
+        }
+
+        const token = match[0];
+        if (token.startsWith("`")) {
+            const code = document.createElement("code");
+            code.className = "answer-inline-code";
+            code.textContent = token.slice(1, -1);
+            parent.append(code);
+        } else {
+            const strong = document.createElement("strong");
+            strong.textContent = token.slice(2, -2);
+            parent.append(strong);
+        }
+
+        cursor = match.index + token.length;
+    }
+
+    if (cursor < text.length) {
+        parent.append(document.createTextNode(text.slice(cursor)));
+    }
+}
+
+function appendTextBlocks(container: HTMLElement, text: string) {
+    const blocks = text.split(/\n{2,}/).map(block => block.trim()).filter(Boolean);
+
+    for (const block of blocks) {
+        const paragraph = document.createElement("div");
+        paragraph.className = "answer-text-block";
+        appendInlineMarkdown(paragraph, block);
+        container.append(paragraph);
+    }
+}
+
+function createCodeBlock(codeText: string, language: string) {
+    const block = document.createElement("div");
+    block.className = "ai-code-block";
+
+    const header = document.createElement("div");
+    header.className = "ai-code-header";
+
+    const title = document.createElement("div");
+    title.className = "ai-code-title";
+
+    const icon = document.createElement("span");
+    icon.className = "ai-code-icon";
+
+    const lang = document.createElement("span");
+    lang.textContent = language || "Code";
+
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "ai-code-copy";
+    copy.textContent = t("copy");
+    copy.addEventListener("click", async event => {
+        event.stopPropagation();
+        await navigator.clipboard.writeText(codeText);
+        copy.textContent = t("copied");
+        window.setTimeout(() => {
+            copy.textContent = t("copy");
+        }, 1200);
+    });
+
+    title.append(icon, lang);
+    header.append(title, copy);
+
+    const scroller = document.createElement("div");
+    scroller.className = "ai-code-scroll";
+
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = codeText.replace(/^\n+|\n+$/g, "");
+    pre.append(code);
+    scroller.append(pre);
+
+    block.append(header, scroller);
+    return block;
+}
+
 function renderFloatingAnswer(answer: HTMLElement, text: string) {
-    answer.textContent = text;
+    answer.dataset.raw = text;
+    answer.innerHTML = "";
     answer.parentElement?.classList.toggle("visible", Boolean(text.trim()));
+
+    if (!text.trim()) return;
+
+    const codeFencePattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = codeFencePattern.exec(text))) {
+        if (match.index > cursor) {
+            appendTextBlocks(answer, text.slice(cursor, match.index));
+        }
+
+        answer.append(createCodeBlock(match[2], match[1].trim()));
+        cursor = match.index + match[0].length;
+    }
+
+    if (cursor < text.length) {
+        appendTextBlocks(answer, text.slice(cursor));
+    }
 }
 
 function formatBytes(size: number) {
@@ -1084,10 +1193,44 @@ function startFloatingAssistant() {
           padding: 0 20px 12px; background: var(--panel-elevated);
         }
         .hint { max-width: 260px; text-align: right; }
-        .answer-shell { display: none; border-top: 1px solid var(--border); }
+        .answer-shell { display: none; border-top: 1px solid var(--border); background: var(--panel-elevated); }
         .answer-shell.visible { display: block; }
         .answer-header { padding: 10px 20px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid var(--border); }
-        .answer { max-height: 260px; overflow: auto; padding: 12px 20px 18px; white-space: pre-wrap; font-size: 14px; line-height: 20px; }
+        .answer { max-height: 420px; overflow: auto; padding: 14px 20px 18px; font-size: 14px; line-height: 20px; }
+        .answer-text-block {
+          margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+          background: rgba(0,0,0,.14); color: var(--text); white-space: pre-wrap;
+        }
+        .answer-text-block:last-child { margin-bottom: 0; }
+        .answer-inline-code {
+          border-radius: 4px; background: rgba(0,0,0,.28); color: #f0f3ff; padding: 1px 5px;
+          font-family: var(--font-code, "Consolas", "Monaco", monospace) !important; font-size: 13px;
+        }
+        .ai-code-block {
+          overflow: hidden; margin: 0 0 12px; border: 1px solid rgba(255,255,255,.08);
+          border-radius: 10px; background: #111214; box-shadow: 0 12px 28px rgba(0,0,0,.24);
+        }
+        .ai-code-header {
+          min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          padding: 0 12px 0 14px; border-bottom: 1px solid rgba(255,255,255,.08); color: #f2f3f5;
+        }
+        .ai-code-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 700; }
+        .ai-code-icon {
+          width: 16px; height: 16px; background: currentColor;
+          -webkit-mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M6.8 3.2L3 7l3.8 3.8-1.1 1.1L.8 7l4.9-4.9 1.1 1.1zm2.4 0l1.1-1.1L15.2 7l-4.9 4.9-1.1-1.1L13 7 9.2 3.2z'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='black' d='M6.8 3.2L3 7l3.8 3.8-1.1 1.1L.8 7l4.9-4.9 1.1 1.1zm2.4 0l1.1-1.1L15.2 7l-4.9 4.9-1.1-1.1L13 7 9.2 3.2z'/%3E%3C/svg%3E") center / contain no-repeat;
+        }
+        .ai-code-copy {
+          min-height: 28px; border: 1px solid rgba(255,255,255,.1); border-radius: 5px; background: rgba(255,255,255,.05);
+          color: var(--interactive-hover); padding: 4px 9px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700;
+        }
+        .ai-code-copy:hover { background: rgba(255,255,255,.1); color: #fff; }
+        .ai-code-scroll { max-height: 360px; overflow: auto; padding: 14px; }
+        .ai-code-scroll pre { margin: 0; min-width: max-content; white-space: pre; }
+        .ai-code-scroll code {
+          font-family: var(--font-code, "Consolas", "Monaco", monospace) !important;
+          color: #f2f3f5; font-size: 13px; line-height: 20px; tab-size: 4;
+        }
         .meta-footer { padding: 16px 20px; border-top: 1px solid var(--border); background: var(--panel); }
         .source-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
         .source-button, .author-chip {
@@ -1358,12 +1501,8 @@ function startFloatingAssistant() {
     });
     shadow.querySelector(".ask")?.addEventListener("click", async () => {
         writeFloatingSettings(shadow);
-        const channelId = SelectedChannelStore.getChannelId();
+        const channelId = SelectedChannelStore.getChannelId() ?? floatingFallbackChannelId;
         const text = prompt.value.trim();
-        if (!channelId) {
-            status.textContent = t("missingChat");
-            return;
-        }
         if (!text) {
             status.textContent = t("emptyPrompt");
             return;
@@ -1385,13 +1524,13 @@ function startFloatingAssistant() {
         }
     });
     shadow.querySelector(".insert")?.addEventListener("click", () => {
-        const text = answer.textContent?.trim() || "";
+        const text = answer.dataset.raw?.trim() || "";
         if (!text) return;
         insertTextIntoChatInputBox(text);
         status.textContent = t("inserted");
     });
     shadow.querySelector(".reply")?.addEventListener("click", () => {
-        const text = answer.textContent?.trim() || "";
+        const text = answer.dataset.raw?.trim() || "";
         const channelId = SelectedChannelStore.getChannelId();
         if (!channelId) {
             status.textContent = t("missingChat");
@@ -1402,7 +1541,7 @@ function startFloatingAssistant() {
         status.textContent = t("inserted");
     });
     shadow.querySelector(".copy")?.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(answer.textContent?.trim() || "");
+        await navigator.clipboard.writeText(answer.dataset.raw?.trim() || "");
         status.textContent = t("copied");
     });
     shadow.querySelector(".clear")?.addEventListener("click", () => {
