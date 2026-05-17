@@ -1,6 +1,8 @@
 import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
 import { findGroupChildrenByChildId, NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
+import { SettingsSection } from "@components/settings/tabs/plugins/components/Common";
+import { GithubButton, WebsiteButton } from "@components/settings/tabs/plugins/LinkIconButton";
 import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
@@ -10,6 +12,12 @@ import { ChannelStore, Menu, MessageStore, showToast, Toasts, UserStore } from "
 
 const logger = new Logger("AIAssistant");
 const SparklesIcon = findExportedComponentLazy("SparklesIcon");
+const memoryStorageKey = "EquicordAIAssistant:memory";
+
+const Author = {
+    name: "ress1zen",
+    id: getCurrentUserAuthorId(),
+};
 
 const Providers = {
     OpenRouter: "openrouter",
@@ -26,6 +34,11 @@ const OutputModes = {
     Send: "send",
 } as const;
 
+const Locales = {
+    Russian: "ru",
+    English: "en",
+} as const;
+
 const CustomModel = "custom";
 
 const providerEndpoints: Record<string, string> = {
@@ -36,7 +49,39 @@ const providerEndpoints: Record<string, string> = {
     [Providers.DeepSeek]: "https://api.deepseek.com/chat/completions",
 };
 
+function getCurrentUserAuthorId() {
+    try {
+        return BigInt(UserStore.getCurrentUser()?.id ?? 0);
+    } catch {
+        return 0n;
+    }
+}
+
+function SourcesAndAuthorSetting() {
+    return (
+        <SettingsSection name="Sources & Author" description="Project links and author profile.">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <WebsiteButton text="Website" href="https://equicord.org" />
+                <GithubButton text="Source Code" href="https://github.com/ress1zen/EquicordAIAssistant" />
+                <GithubButton text="Author: ress1zen" href="https://github.com/ress1zen" />
+            </div>
+        </SettingsSection>
+    );
+}
+
 const settings = definePluginSettings({
+    sourcesAndAuthor: {
+        type: OptionType.COMPONENT,
+        component: SourcesAndAuthorSetting,
+    },
+    locale: {
+        type: OptionType.SELECT,
+        description: "Assistant UI language and response language.",
+        options: [
+            { label: "Русский", value: Locales.Russian, default: true },
+            { label: "English", value: Locales.English },
+        ],
+    },
     provider: {
         type: OptionType.SELECT,
         description: "AI provider.",
@@ -103,6 +148,16 @@ const settings = definePluginSettings({
         description: "Number of recent channel messages to include as context.",
         default: 6,
     },
+    memoryEnabled: {
+        type: OptionType.BOOLEAN,
+        description: "Remember previous assistant requests locally and use them as context.",
+        default: true,
+    },
+    memoryMessages: {
+        type: OptionType.NUMBER,
+        description: "How many previous memory messages to include.",
+        default: 12,
+    },
     includeAuthorNames: {
         type: OptionType.BOOLEAN,
         description: "Include Discord author names in recent-message context.",
@@ -157,10 +212,15 @@ const settings = definePluginSettings({
             return value >= 0 && value <= 50 ? true : "Context messages must be between 0 and 50.";
         },
     },
+    memoryMessages: {
+        isValid(value) {
+            return value >= 0 && value <= 40 ? true : "Memory messages must be between 0 and 40.";
+        },
+    },
 });
 
 type ApiMessage = {
-    role: "system" | "user";
+    role: "system" | "user" | "assistant";
     content: string;
 };
 
@@ -190,13 +250,81 @@ function getModel() {
         : String(settings.store.modelPreset).trim();
 }
 
+function responseLanguageInstruction() {
+    return settings.store.locale === Locales.English
+        ? "IMPORTANT: answer strictly in English. Do not switch to another language unless the user explicitly asks for translation."
+        : "ВАЖНО: отвечай строго на русском языке. Даже если вопрос сложный, технический или содержит английские термины, основной ответ должен быть на русском.";
+}
+
+function responseLanguageReminder() {
+    return settings.store.locale === Locales.English
+        ? "Answer strictly in English."
+        : "Ответь строго на русском языке.";
+}
+
+function withLanguageReminder(prompt: string) {
+    return `${prompt.trim()}\n\n${responseLanguageReminder()}`.trim();
+}
+
 function getSystemPrompt(channelId: string) {
     const currentUser = UserStore.getCurrentUser();
-
-    return settings.store.systemPrompt
+    const basePrompt = settings.store.systemPrompt
         .replace(/{current_user}/g, currentUser?.username ?? "Unknown User")
         .replace(/{current_time}/g, new Date().toString())
         .replace(/{channel_id}/g, channelId);
+
+    return `${responseLanguageInstruction()}\n\n${basePrompt}\n\n${responseLanguageInstruction()}`.trim();
+}
+
+const maxMemoryContentChars = 4000;
+
+function cleanMemoryContent(text: string) {
+    return String(text || "").trim().slice(0, maxMemoryContentChars);
+}
+
+function readMemory(): ApiMessage[] {
+    if (!settings.store.memoryEnabled) return [];
+
+    const maxMessages = Math.max(0, Math.min(40, Number(settings.store.memoryMessages) || 0));
+    if (!maxMessages) return [];
+
+    try {
+        const stored = JSON.parse(localStorage.getItem(memoryStorageKey) || "[]");
+        if (!Array.isArray(stored)) return [];
+
+        return stored
+            .filter(item => (item?.role === "user" || item?.role === "assistant") && typeof item.content === "string")
+            .map(item => ({
+                role: item.role as "user" | "assistant",
+                content: cleanMemoryContent(item.content),
+            }))
+            .filter(item => item.content)
+            .slice(-maxMessages);
+    } catch {
+        return [];
+    }
+}
+
+function writeMemory(messages: ApiMessage[]) {
+    try {
+        localStorage.setItem(memoryStorageKey, JSON.stringify(messages.slice(-40)));
+    } catch (error) {
+        logger.warn("Could not write AI Assistant memory", error);
+    }
+}
+
+function rememberExchange(prompt: string, answer: string) {
+    if (!settings.store.memoryEnabled) return;
+
+    const userContent = cleanMemoryContent(prompt);
+    const assistantContent = cleanMemoryContent(answer);
+    if (!userContent || !assistantContent) return;
+
+    writeMemory([
+        ...readMemory(),
+        { role: "user", content: userContent },
+        { role: "assistant", content: assistantContent },
+    ]);
 }
 
 function messageToText(message: Message) {
@@ -267,10 +395,11 @@ async function requestAssistant(prompt: string, channelId: string) {
             role: "system",
             content: getSystemPrompt(channelId),
         },
+        ...readMemory(),
         ...getRecentContext(channelId),
         {
             role: "user",
-            content: prompt,
+            content: withLanguageReminder(prompt),
         },
     ];
 
@@ -351,10 +480,10 @@ function sendLocalBotAnswer(channelId: string, content: string) {
     }
 }
 
-async function outputAnswer(channelId: string, answer: string) {
+async function outputAnswer(channelId: string, answer: string, outputMode = settings.store.outputMode) {
     if (!answer.trim()) return;
 
-    switch (settings.store.outputMode) {
+    switch (outputMode) {
         case OutputModes.ChatBar:
             insertTextIntoChatInputBox(answer);
             break;
@@ -369,7 +498,7 @@ async function outputAnswer(channelId: string, answer: string) {
     }
 }
 
-async function askAndOutput(channelId: string, prompt: string) {
+async function askAndOutput(channelId: string, prompt: string, outputMode = settings.store.outputMode) {
     sendBotMessage(channelId, {
         content: "Thinking...",
         author: {
@@ -383,20 +512,35 @@ async function askAndOutput(channelId: string, prompt: string) {
         return;
     }
 
-    await outputAnswer(channelId, answer);
+    rememberExchange(prompt, answer);
+    await outputAnswer(channelId, answer, outputMode);
 }
 
-function messageAssistPrompt(text: string) {
+type MessageAction = "answer" | "reply" | "explain" | "rewrite" | "shorten" | "translate";
+
+function messageAssistPrompt(text: string, action: MessageAction = "answer") {
+    const taskByAction: Record<MessageAction, string> = {
+        answer: "If the selected message is a question, answer it directly. If it is a request, fulfill it. If it needs a reply, suggest a useful reply.",
+        reply: "Write a direct reply to the selected message. Return only the reply text.",
+        explain: "Explain the selected message clearly and practically.",
+        rewrite: "Rewrite the selected message in a clearer, more natural style. Preserve the meaning.",
+        shorten: "Shorten the selected message while preserving the key meaning.",
+        translate: settings.store.locale === Locales.English
+            ? "Translate the selected message into English."
+            : "Переведи выбранное сообщение на русский язык.",
+    };
+
     return [
         "You are helping with a Discord message.",
-        "If the message is a question, answer it directly.",
-        "If the message asks for an action or explanation, fulfill it.",
-        "If the message is rough, unclear, or badly written, rewrite it in a cleaner natural style.",
-        "If none of those apply, summarize the meaning and suggest a useful reply.",
+        taskByAction[action],
         "Keep the answer practical and concise.",
         "",
         `Message:\n${text}`,
     ].join("\n");
+}
+
+function runMessageAction(channelId: string, text: string, action: MessageAction, outputMode?: string) {
+    return askAndOutput(channelId, messageAssistPrompt(text, action), outputMode);
 }
 
 const messageCtxPatch: NavContextMenuPatchCallback = (children, { message }: { message: Message; }) => {
@@ -408,19 +552,49 @@ const messageCtxPatch: NavContextMenuPatchCallback = (children, { message }: { m
 
     group.splice(group.findIndex(c => c?.props?.id === "copy-text") + 1, 0, (
         <Menu.MenuItem
-            id="vc-ai-assistant-explain"
+            id="vc-ai-assistant"
             label="Answer With AI"
             icon={SparklesIcon}
-            action={() => askAndOutput(message.channel_id, messageAssistPrompt(text))}
-        />
+        >
+            <Menu.MenuItem
+                id="vc-ai-assistant-answer"
+                label="Answer"
+                action={() => runMessageAction(message.channel_id, text, "answer")}
+            />
+            <Menu.MenuItem
+                id="vc-ai-assistant-reply"
+                label="Answer + Reply"
+                action={() => runMessageAction(message.channel_id, text, "reply", OutputModes.ChatBar)}
+            />
+            <Menu.MenuItem
+                id="vc-ai-assistant-explain"
+                label="Explain"
+                action={() => runMessageAction(message.channel_id, text, "explain")}
+            />
+            <Menu.MenuItem
+                id="vc-ai-assistant-rewrite"
+                label="Rewrite"
+                action={() => runMessageAction(message.channel_id, text, "rewrite", OutputModes.ChatBar)}
+            />
+            <Menu.MenuItem
+                id="vc-ai-assistant-shorten"
+                label="Shorten"
+                action={() => runMessageAction(message.channel_id, text, "shorten", OutputModes.ChatBar)}
+            />
+            <Menu.MenuItem
+                id="vc-ai-assistant-translate"
+                label="Translate"
+                action={() => runMessageAction(message.channel_id, text, "translate", OutputModes.ChatBar)}
+            />
+        </Menu.MenuItem>
     ));
 };
 
 export default definePlugin({
     name: "AIAssistant",
-    description: "Adds a configurable AI assistant with provider, model, and API key settings.",
+    description: "Adds a configurable AI assistant with providers, localization, memory, message actions, and API key settings.",
     tags: ["Chat", "Commands", "Utility"],
-    authors: [{ name: "local-user", id: 0n }],
+    authors: [Author],
     dependencies: ["MessagePopoverAPI"],
     settings,
     contextMenus: {
@@ -437,7 +611,7 @@ export default definePlugin({
                 icon: SparklesIcon,
                 message,
                 channel: ChannelStore.getChannel(message.channel_id),
-                onClick: () => askAndOutput(message.channel_id, messageAssistPrompt(text)),
+                onClick: () => runMessageAction(message.channel_id, text, "answer"),
             };
         },
     },
