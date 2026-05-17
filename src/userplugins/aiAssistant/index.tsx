@@ -11,14 +11,26 @@ import { ChannelStore, Menu, MessageStore, SelectedChannelStore, showToast, Toas
 
 const logger = new Logger("AIAssistant");
 const memoryStorageKey = "EquicordAIAssistant:memory";
+const magicWandIconDataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACeklEQVR4AdSWDW6jMBCF30TZe6Q3aU5SkDaVeoq2p1hpsxLkJMlNkns0u7Mzw58NNjiQqqqFYWzseR9jY3uFL07fB4CLX5vPCFZ6BGh95vJPcW+IJAAufme18GP9vNtjEoAP+1fQ6rVS5I1GgYv93UBGAbjcMxhvADvjzxkIRwVBJOl80Rx57VVHAcwBQcQRSHQB8yHwAhYdmS+gH0eLXqiRUxcFoPzlQk+7d/D1AaASTWJsKfv5QPnu1FQ1z0ocx6rMGzBlUxBRgMoJoCDd11IZEoYkX1wq7KohRubMJID6MVEdjkjYtY0/T6qa7n69dLZvJQFoFx0OA9FCMP89QSG9d6RzJbcoevVdIRmg69JZOlHlTznKH3EG1hv8ux46iEZ8OFc6D8DKLdxiqzhoXUgfWRNkrInEriGYc/DHdjxi0lOuWQC+uHixq4Og/Fkm60t03K15fbsZoBaXkEO+HL0kEL2aqeJNAI542C8jKexu52SAzxBXkCSAueLaT7MKxfIkgDnQtT3mYSzssh9Ac6yv1I8CLBG3pdl2Ud5UtqgFrijAEnHTIXqyp95cW8tODgIsEde+1Q7ImaPzKKtlEYrEAEAdYOaYi8jZ+jLe4CWWAw1nqA4yZ9Oo33sA9mKuuJ2aOWn1czcnD8Doa7LBgzG6yKhTynZbO8AMdkXxpnVyuCE5zEipvVoA+/q2umdMiLutDURPUu4pSuxqOx/uDy2AdpSTT+46M/sGcWvf3PjjvTHF76G1e0YLoPW6i0njDmKuuDizDwJOkDy2LXsA0ljOgM+ljaOOV+DgqW2SM19z0nkx0mEAoG2VXrPaS3KKjyDAEtF+36nyfwAAAP//MnqKugAAAAZJREFUAwAePjBQnHzkXwAAAABJRU5ErkJggg==";
 let floatingRoot: HTMLDivElement | null = null;
 
 function AssistantIcon(props: any) {
+    const { style, ...rest } = props;
+
     return (
-        <svg {...props} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 20l10.8-10.8 3.9 3.9L7.9 23.9 4 20z" fill="currentColor" />
-            <path d="M16.7 2.2l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7zM7.4 3.4l.55 1.65L9.6 5.6l-1.65.55L7.4 7.8l-.55-1.65L5.2 5.6l1.65-.55L7.4 3.4zM19.4 15.7l.55 1.65 1.65.55-1.65.55-.55 1.65-.55-1.65-1.65-.55 1.65-.55.55-1.65z" fill="currentColor" />
-        </svg>
+        <span
+            {...rest}
+            aria-hidden="true"
+            style={{
+                display: "block",
+                width: "1em",
+                height: "1em",
+                backgroundColor: "currentColor",
+                WebkitMask: `url("${magicWandIconDataUri}") center / contain no-repeat`,
+                mask: `url("${magicWandIconDataUri}") center / contain no-repeat`,
+                ...style,
+            }}
+        />
     );
 }
 
@@ -653,66 +665,139 @@ function startFloatingAssistant() {
     const shadow = floatingRoot.attachShadow({ mode: "open" });
     shadow.innerHTML = `
       <style>
-        :host { all: initial; font-family: var(--font-primary, "gg sans", "Noto Sans", sans-serif); }
-        * { box-sizing: border-box; font-family: inherit; }
+        :host {
+          all: initial;
+          --panel: var(--modal-background, #313338);
+          --panel-elevated: var(--modal-footer-background, var(--background-secondary, #2b2d31));
+          --field: var(--input-background, #1e1f22);
+          --field-hover: var(--background-modifier-hover, #232428);
+          --border: var(--background-modifier-accent, rgba(78, 80, 88, .48));
+          --text: var(--text-normal, #dbdee1);
+          --text-strong: var(--header-primary, #f2f3f5);
+          --muted: var(--text-muted, #b5bac1);
+          --interactive: var(--interactive-normal, #b5bac1);
+          --interactive-hover: var(--interactive-hover, #dbdee1);
+          --accent: var(--brand-experiment, var(--brand-500, #5865f2));
+          --danger: var(--status-danger, #da373c);
+          font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
+          letter-spacing: 0;
+          text-rendering: optimizeLegibility;
+        }
+        * {
+          box-sizing: border-box;
+          font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif) !important;
+        }
         .fab {
           position: fixed; right: 18px; bottom: 18px; z-index: 2147483647;
           width: 48px; height: 48px; border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
-          background: var(--brand-experiment, #5865f2); color: #d7dcff; cursor: pointer;
-          display: grid; place-items: center; box-shadow: 0 16px 42px rgba(0,0,0,.42);
+          background: var(--accent); color: white; cursor: pointer;
+          display: grid; place-items: center; padding: 0; font: inherit; font-size: 15px; font-weight: 800;
+          box-shadow: 0 16px 42px rgba(0,0,0,.42);
+          transition: transform .16s ease, filter .16s ease, box-shadow .16s ease;
         }
-        .fab svg { width: 30px; height: 30px; }
+        .fab:hover { transform: translateY(-2px); filter: brightness(1.06); box-shadow: 0 20px 52px rgba(0,0,0,.5); }
+        .magic-wand-icon {
+          display: block; width: 28px; height: 28px; background: #b8bed8;
+          -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+          -webkit-mask-position: center; mask-position: center;
+          -webkit-mask-size: contain; mask-size: contain;
+          pointer-events: none;
+        }
+        .mark .magic-wand-icon { width: 20px; height: 20px; }
         .panel {
           position: fixed; right: 18px; bottom: 78px; z-index: 2147483647;
-          width: min(520px, calc(100vw - 28px)); max-height: min(760px, calc(100vh - 100px));
+          width: min(520px, calc(100vw - 28px)); max-height: min(780px, calc(100vh - 100px));
           display: none; flex-direction: column; overflow: hidden;
-          border: 1px solid rgba(0,0,0,.3); border-radius: 8px;
-          background: var(--modal-background, #313338); color: var(--text-normal, #dbdee1);
+          border: 1px solid rgba(0,0,0,.28); border-radius: 8px;
+          background: var(--panel); color: var(--text);
           box-shadow: var(--elevation-high, 0 18px 48px rgba(0,0,0,.52));
         }
-        .panel.open { display: flex; }
-        .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .panel.open { display: flex; animation: panel-in .16s ease-out; }
+        @keyframes panel-in {
+          from { opacity: 0; transform: translateY(8px) scale(.985); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .header {
+          display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
+        }
         .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-        .mark { width: 36px; height: 36px; border-radius: 8px; background: var(--brand-experiment, #5865f2); color: #d7dcff; display: grid; place-items: center; flex: 0 0 auto; }
-        .mark svg { width: 22px; height: 22px; }
-        .title { color: var(--header-primary, #f2f3f5); font-size: 20px; line-height: 24px; font-weight: 700; }
-        .subtitle { margin-top: 2px; color: var(--text-muted, #b5bac1); font-size: 13px; line-height: 18px; }
-        .close { width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: var(--interactive-normal, #b5bac1); cursor: pointer; font-size: 20px; }
-        .body { overflow: auto; min-height: 0; padding: 16px 20px 0; }
+        .mark {
+          display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px;
+          border-radius: 8px; background: var(--accent); color: white; font-size: 13px; font-weight: 800;
+        }
+        .title { color: var(--text-strong); font-size: 20px; line-height: 24px; font-weight: 700; }
+        .subtitle { margin-top: 2px; color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 400; }
+        .close {
+          width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent;
+          color: var(--interactive); cursor: pointer; font-size: 18px; line-height: 1;
+        }
+        .close:hover { color: var(--interactive-hover); background: rgba(255,255,255,.06); }
+        .body { overflow: auto; min-height: 0; }
+        .group { padding: 16px 20px 0; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .full { grid-column: 1 / -1; }
-        label { display: block; color: var(--header-secondary, #b5bac1); font-size: 12px; line-height: 16px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; }
-        input, select, textarea {
-          width: 100%; border: 1px solid transparent; border-radius: 4px; background: var(--input-background, #1e1f22);
-          color: var(--text-normal, #dbdee1); padding: 10px 12px; font-size: 14px; line-height: 20px; outline: none;
+        .control { min-width: 0; }
+        label {
+          display: block; color: var(--muted); font-size: 12px; line-height: 16px;
+          font-weight: 700; margin-bottom: 6px; text-transform: uppercase;
         }
+        input, select, textarea {
+          width: 100%; border: 1px solid transparent; border-radius: 4px; background: var(--field);
+          color: var(--text); padding: 10px 14px; font-size: 14px; line-height: 20px; outline: none;
+        }
+        input:hover, select:hover, textarea:hover { background: var(--field-hover); }
+        input:focus, select:focus, textarea:focus { border-color: var(--accent); }
         textarea { min-height: 108px; resize: vertical; }
-        input:focus, select:focus, textarea:focus { border-color: var(--brand-experiment, #5865f2); }
-        .actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 0; }
-        button.action { min-height: 38px; border: 1px solid transparent; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px; font-weight: 700; }
-        .ask { background: var(--brand-experiment, #5865f2); }
-        .secondary { background: var(--background-modifier-selected, #4e5058); }
-        .danger { background: rgba(218,55,60,.14); border-color: var(--status-danger, #da373c) !important; color: #ffb3b8 !important; }
-        .status-row { min-height: 24px; color: var(--text-muted, #b5bac1); font-size: 12px; font-weight: 600; padding-bottom: 12px; }
-        .answer-shell { display: none; margin: 0 -20px; border-top: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .prompt-area { padding: 16px 20px 0; }
+        .actions {
+          display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+          padding: 16px 20px 10px; background: var(--panel-elevated);
+        }
+        button.action {
+          display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+          min-height: 38px; min-width: 0; border: 1px solid transparent; border-radius: 3px;
+          background: var(--accent); color: white; padding: 8px 14px; cursor: pointer;
+          font: inherit; font-size: 14px; font-weight: 600; transition: transform .12s ease, filter .12s ease, background .12s ease;
+          white-space: nowrap;
+        }
+        button.action:hover { filter: brightness(1.07); }
+        button.action:active { transform: translateY(1px); }
+        button.action.ask { background: linear-gradient(180deg, #6d7cff 0%, var(--accent) 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 8px 18px rgba(88,101,242,.2); }
+        button.action.insert { border-color: rgba(88,101,242,.5); background: rgba(88,101,242,.18); color: #e1e6ff; }
+        button.action.copy { border-color: rgba(52,152,219,.5); background: rgba(52,152,219,.18); color: #d7edff; }
+        button.action.clear { border-color: rgba(218,55,60,.5); background: rgba(218,55,60,.16); color: #ffd9dc; }
+        button.action.insert:hover { background: rgba(88,101,242,.3); }
+        button.action.copy:hover { background: rgba(52,152,219,.3); }
+        button.action.clear:hover { background: rgba(218,55,60,.28); }
+        .status-row {
+          min-height: 22px; color: var(--muted); font-size: 12px; font-weight: 600;
+          padding: 0 20px 12px; background: var(--panel-elevated);
+        }
+        .answer-shell { display: none; border-top: 1px solid var(--border); }
         .answer-shell.visible { display: block; }
-        .answer-header { padding: 10px 20px; color: var(--text-muted, #b5bac1); font-size: 12px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid var(--background-modifier-accent, rgba(78,80,88,.48)); }
+        .answer-header { padding: 10px 20px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid var(--border); }
         .answer { max-height: 260px; overflow: auto; padding: 12px 20px 18px; white-space: pre-wrap; font-size: 14px; line-height: 20px; }
         @media (max-width: 520px) { .grid, .actions { grid-template-columns: 1fr; } }
       </style>
-      <button class="fab" type="button"></button>
+      <button class="fab" type="button"><span class="magic-wand-icon" aria-hidden="true"></span></button>
       <section class="panel">
         <div class="header">
-          <div class="brand"><div class="mark"></div><div><div class="title" data-i18n="title"></div><div class="subtitle" data-i18n="subtitle"></div></div></div>
-          <button class="close" type="button">×</button>
+          <div class="brand"><div class="mark"><span class="magic-wand-icon" aria-hidden="true"></span></div><div><div class="title" data-i18n="title"></div><div class="subtitle" data-i18n="subtitle"></div></div></div>
+          <button class="close" type="button">x</button>
         </div>
         <div class="body">
-          <div class="grid">
-            <div><label data-i18n="language"></label><select data-setting="locale"><option value="ru">Русский</option><option value="en">English</option></select></div>
-            <div><label data-i18n="provider"></label><select data-setting="provider"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="deepseek">DeepSeek</option><option value="custom">Custom</option></select></div>
-            <div class="full"><label data-i18n="model"></label><select data-setting="modelPreset"><option value="openrouter/auto">OpenRouter Auto</option><option value="gpt-4o-mini">OpenAI GPT-4o mini</option><option value="gpt-4o">OpenAI GPT-4o</option><option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option><option value="mistral-large-latest">Mistral Large Latest</option><option value="deepseek-chat">DeepSeek Chat</option><option value="custom">Custom model ID</option></select></div>
-            <div class="full"><label data-i18n="apiKey"></label><input data-setting="apiKey" type="password" autocomplete="off"></div>
-            <div class="full"><label data-i18n="prompt"></label><textarea class="prompt"></textarea></div>
+          <div class="group">
+            <div class="grid">
+              <div class="control"><label data-i18n="language"></label><select data-setting="locale"><option value="ru">Русский</option><option value="en">English</option></select></div>
+              <div class="control"><label data-i18n="provider"></label><select data-setting="provider"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="deepseek">DeepSeek</option><option value="custom">Custom</option></select></div>
+              <div class="control full"><label data-i18n="model"></label><select data-setting="modelPreset"><option value="openrouter/auto">OpenRouter Auto</option><option value="gpt-4o-mini">OpenAI GPT-4o mini</option><option value="gpt-4o">OpenAI GPT-4o</option><option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option><option value="mistral-large-latest">Mistral Large Latest</option><option value="deepseek-chat">DeepSeek Chat</option><option value="custom">Custom model ID</option></select></div>
+              <div class="control full"><label data-i18n="apiKey"></label><input data-setting="apiKey" type="password" autocomplete="off" spellcheck="false"></div>
+            </div>
+          </div>
+          <div class="prompt-area">
+            <label data-i18n="prompt"></label>
+            <textarea class="prompt"></textarea>
           </div>
           <div class="actions"><button class="action ask" data-i18n="ask"></button><button class="action secondary insert" data-i18n="insert"></button><button class="action secondary copy" data-i18n="copy"></button><button class="action danger clear" data-i18n="clear"></button></div>
           <div class="status-row"><span class="status"></span></div>
@@ -721,9 +806,11 @@ function startFloatingAssistant() {
       </section>
     `;
 
-    const icon = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20l10.8-10.8 3.9 3.9L7.9 23.9 4 20z" fill="currentColor"/><path d="M16.7 2.2l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7zM7.4 3.4l.55 1.65L9.6 5.6l-1.65.55L7.4 7.8l-.55-1.65L5.2 5.6l1.65-.55L7.4 3.4zM19.4 15.7l.55 1.65 1.65.55-1.65.55-.55 1.65-.55-1.65-1.65-.55 1.65-.55.55-1.65z" fill="currentColor"/></svg>`;
-    shadow.querySelector(".fab")!.innerHTML = icon;
-    shadow.querySelector(".mark")!.innerHTML = icon;
+    shadow.querySelectorAll(".magic-wand-icon").forEach(icon => {
+        const element = icon as HTMLElement;
+        element.style.webkitMaskImage = `url("${magicWandIconDataUri}")`;
+        element.style.maskImage = `url("${magicWandIconDataUri}")`;
+    });
 
     const panel = shadow.querySelector(".panel") as HTMLElement;
     const prompt = shadow.querySelector(".prompt") as HTMLTextAreaElement;
