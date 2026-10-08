@@ -487,14 +487,19 @@ async function requestAssistant(prompt: string, channelId: string, attachments: 
     ];
 
     try {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+        };
+
+        if (settings.store.provider === Providers.OpenRouter) {
+            headers["HTTP-Referer"] = "https://discord.com";
+            headers["X-Title"] = "Equicord AI Assistant";
+        }
+
         const response = await fetch(endpoint, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`,
-                "HTTP-Referer": "https://discord.com",
-                "X-Title": "Equicord AI Assistant",
-            },
+            headers,
             body: JSON.stringify({
                 model,
                 messages,
