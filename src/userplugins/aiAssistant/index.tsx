@@ -1,13 +1,19 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 ress1zen
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
 import { findGroupChildrenByChildId, NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
 import { SettingsSection } from "@components/settings/tabs/plugins/components/Common";
-import { GithubButton, WebsiteButton } from "@components/settings/tabs/plugins/LinkIconButton";
+import { GithubButton, WebsiteButton } from "@components/settings/tabs/plugins/PluginModalButtons";
 import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { ChannelStore, Menu, MessageStore, SelectedChannelStore, showToast, Toasts, UserStore } from "@webpack/common";
+import { ChannelStore, Menu, MessageStore, SelectedChannelStore, showToast, UserStore } from "@webpack/common";
 
 const logger = new Logger("AIAssistant");
 const memoryStorageKey = "EquicordAIAssistant:memory";
@@ -57,6 +63,8 @@ const OutputModes = {
     Send: "send",
 } as const;
 
+type OutputMode = typeof OutputModes[keyof typeof OutputModes];
+
 const Locales = {
     Russian: "ru",
     English: "en",
@@ -82,7 +90,7 @@ function getCurrentUserAuthorId() {
 
 function SourcesAndAuthorSetting() {
     return (
-        <SettingsSection name="Sources & Author" description="Project links and author profile.">
+        <SettingsSection id="sourcesAndAuthor" name="Sources & Author" description="Project links and author profile.">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 <WebsiteButton text="Website" href="https://equicord.org" />
                 <GithubButton text="Source Code" href="https://github.com/ress1zen/EquicordAIAssistant" />
@@ -461,7 +469,7 @@ async function requestAssistant(prompt: string, channelId: string, attachments: 
     const endpoint = getEndpoint();
 
     if (!apiKey || !model || !endpoint) {
-        showToast("AI Assistant: provider, API key, model, or endpoint is missing.", Toasts.Type.FAILURE);
+        showToast("AI Assistant: provider, API key, model, or endpoint is missing.", "failure");
         return "";
     }
 
@@ -508,20 +516,20 @@ async function requestAssistant(prompt: string, channelId: string, attachments: 
             const message = data.error?.message || rawBody || `HTTP ${response.status}`;
 
             logger.error("AI provider returned an error", message);
-            showToast(`AI Assistant: ${message}`, Toasts.Type.FAILURE);
+            showToast(`AI Assistant: ${message}`, "failure");
 
             return "";
         }
 
         const answer = data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? "";
         if (!answer.trim()) {
-            showToast("AI Assistant: empty model response.", Toasts.Type.FAILURE);
+            showToast("AI Assistant: empty model response.", "failure");
         }
 
         return answer.trim();
     } catch (error) {
         logger.error("AI request failed", error);
-        showToast("AI Assistant: request failed. Check console for details.", Toasts.Type.FAILURE);
+        showToast("AI Assistant: request failed. Check console for details.", "failure");
         return "";
     }
 }
@@ -621,7 +629,7 @@ function messageAssistPrompt(text: string, action: MessageAction = "answer") {
     ].join("\n");
 }
 
-function runMessageAction(channelId: string, text: string, action: MessageAction, outputMode?: string) {
+function runMessageAction(channelId: string, text: string, action: MessageAction, outputMode?: OutputMode) {
     return askAndOutput(channelId, messageAssistPrompt(text, action), outputMode);
 }
 
@@ -797,8 +805,11 @@ function syncFloatingForm(shadow: ShadowRoot) {
 }
 
 function writeFloatingSettings(shadow: ShadowRoot, shouldSync = true) {
-    settings.store.locale = (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value;
-    settings.store.provider = (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value;
+    const locale = (shadow.querySelector("[data-setting='locale']") as HTMLSelectElement).value;
+    settings.store.locale = locale === Locales.English ? Locales.English : Locales.Russian;
+    const provider = (shadow.querySelector("[data-setting='provider']") as HTMLSelectElement).value;
+    const validProvider = Object.values(Providers).find(value => value === provider);
+    if (validProvider) settings.store.provider = validProvider;
     settings.store.modelPreset = (shadow.querySelector("[data-setting='modelPreset']") as HTMLSelectElement).value;
     settings.store.apiKey = (shadow.querySelector("[data-setting='apiKey']") as HTMLInputElement).value;
     settings.store.customEndpoint = (shadow.querySelector("[data-setting='customEndpoint']") as HTMLInputElement).value;
